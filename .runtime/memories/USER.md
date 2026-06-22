@@ -1,0 +1,1 @@
+No confirmed user profile has been provided yet. Save stable preferences, language choice, communication style, and workspace-specific profile facts here with the memory tool.

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workspace FredAI Agent</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">F</div>
+          <div>
+            <h1>Workspace FredAI Agent</h1>
+            <p id="connectionStatus">Checking server</p>
+          </div>
+        </div>
+
+        <form id="contextForm" class="context-form">
+          <label>
+            Workspace
+            <input id="workspaceId" name="workspaceId" autocomplete="off" value="workspace_123" />
+          </label>
+          <label>
+            User
+            <input id="userId" name="userId" autocomplete="off" value="user_456" />
+          </label>
+          <label>
+            Session
+            <input id="sessionId" name="sessionId" autocomplete="off" placeholder="created after first reply" />
+          </label>
+          <div class="button-row">
+            <button id="newSessionButton" type="button">New Session</button>
+            <button id="copySessionButton" type="button">Copy Session</button>
+          </div>
+        </form>
+
+        <div class="status-panel">
+          <div>
+            <span>Model</span>
+            <strong id="modelName">-</strong>
+          </div>
+          <div>
+            <span>Tools</span>
+            <strong id="toolCount">-</strong>
+          </div>
+          <div>
+            <span>Last request</span>
+            <strong id="lastRequest">-</strong>
+          </div>
+        </div>
+      </aside>
+
+      <section class="chat">
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <form id="chatForm" class="composer">
+          <textarea id="messageInput" rows="3" placeholder="Ask the agent"></textarea>
+          <div class="composer-footer">
+            <div id="turnMeta" class="turn-meta"></div>
+            <button id="sendButton" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
