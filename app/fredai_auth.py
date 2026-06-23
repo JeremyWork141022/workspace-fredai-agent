@@ -52,10 +52,10 @@ class FredAIAuth:
             name
             for name, value in {
                 "FREDAI_OAUTH_URL": cfg.fredai_oauth_url,
-                "FREDAI_CLIENT_ID": cfg.fredai_client_id,
-                "FREDAI_CLIENT_SECRET": cfg.fredai_client_secret,
-                "FREDAI_OAUTH_USERNAME": cfg.fredai_oauth_username,
-                "FREDAI_OAUTH_PASSWORD_B64": cfg.fredai_oauth_password_b64,
+                "FREDAI_CLIENT_ID or CLIENT_ID": cfg.fredai_client_id,
+                "FREDAI_CLIENT_SECRET or CLIENT_SECRET": cfg.fredai_client_secret,
+                "FREDAI_OAUTH_USERNAME or OAUTH_USERNAME": cfg.fredai_oauth_username,
+                "FREDAI_OAUTH_PASSWORD_B64 or OAUTH_PASSWORD": cfg.fredai_oauth_password_b64,
             }.items()
             if not value
         ]
@@ -96,4 +96,3 @@ class FredAIAuth:
             expires_at = time.time() + float(expires_in)
 
         return FredAIToken(access_token=access_token, expires_at=expires_at)
-

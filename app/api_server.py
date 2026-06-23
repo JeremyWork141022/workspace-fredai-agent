@@ -64,6 +64,14 @@ async def health() -> Dict[str, Any]:
         "model": config.model,
         "fredai_base_url": config.fredai_base_url,
         "scheduler_enabled": config.scheduler_enabled,
+        "fredai_auth_config": {
+            "oauth_url": bool(config.fredai_oauth_url),
+            "client_id": bool(config.fredai_client_id),
+            "client_secret": bool(config.fredai_client_secret),
+            "oauth_username": bool(config.fredai_oauth_username),
+            "oauth_password_b64": bool(config.fredai_oauth_password_b64),
+            "jwt_token_optional": bool(config.fredai_jwt_token),
+        },
         "memory": orchestrator.memory_manager.debug_state(),
     }
 
