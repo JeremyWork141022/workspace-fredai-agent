@@ -8,9 +8,9 @@
   </head>
   <body>
     <main class="shell">
-      <aside class="sidebar">
+      <aside class="sidebar" aria-label="Workspace context">
         <div class="brand">
-          <div class="mark">F</div>
+          <div class="mark" aria-hidden="true">F</div>
           <div>
             <h1>Workspace FredAI Agent</h1>
             <p id="connectionStatus">Checking server</p>
@@ -36,7 +36,7 @@
           </div>
         </form>
 
-        <div class="status-panel">
+        <div class="status-panel" aria-label="Server status">
           <div>
             <span>Model</span>
             <strong id="modelName">-</strong>
@@ -52,14 +52,32 @@
         </div>
       </aside>
 
-      <section class="chat">
+      <section class="chat" aria-label="Agent chat">
         <div id="messages" class="messages" aria-live="polite"></div>
+        <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
+          Latest
+        </button>
 
         <form id="chatForm" class="composer">
-          <textarea id="messageInput" rows="3" placeholder="Ask the agent"></textarea>
+          <div id="attachmentList" class="attachment-list" aria-live="polite"></div>
+          <div id="composerShell" class="composer-shell">
+            <input
+              id="fileInput"
+              class="file-input"
+              type="file"
+              multiple
+              accept=".csv,.xls,.xlsx,.pdf,.doc,.docx,.txt,.md,.json,.xml,.yaml,.yml,.log"
+            />
+            <button id="attachButton" class="icon-button" type="button" title="Attach files" aria-label="Attach files">
+              +
+            </button>
+            <textarea id="messageInput" rows="1" placeholder="Ask anything about your workspace"></textarea>
+            <button id="stopButton" class="primary-button hidden" type="button">Stop</button>
+            <button id="sendButton" class="primary-button" type="submit">Send</button>
+          </div>
           <div class="composer-footer">
             <div id="turnMeta" class="turn-meta"></div>
-            <button id="sendButton" type="submit">Send</button>
+            <p class="disclaimer">FredAI can make mistakes. Check important work outputs.</p>
           </div>
         </form>
       </section>
@@ -68,4 +86,3 @@
     <script src="/static/app.js"></script>
   </body>
 </html>
-
