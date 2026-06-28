@@ -304,6 +304,35 @@ class SessionStore:
             row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             return self._row_to_session(row)
 
+    def get_session(self, session_id: str) -> Optional[SessionRecord]:
+        session_id = session_id.strip()
+        if not session_id:
+            return None
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        return self._row_to_session(row) if row else None
+
+    def rename_session(self, session_id: str, title: str) -> Optional[SessionRecord]:
+        session_id = session_id.strip()
+        clean_title = " ".join(title.strip().split())[:120]
+        if not session_id or not clean_title:
+            return None
+        now = utc_now()
+        with self._connection() as conn:
+            existing = conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if not existing:
+                return None
+            conn.execute(
+                """
+                UPDATE sessions
+                SET title = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (clean_title, now, session_id),
+            )
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        return self._row_to_session(row) if row else None
+
     def append_message(
         self,
         *,
@@ -673,4 +702,3 @@ class SessionStore:
             created_at=str(row["created_at"]),
             metadata=json_loads(str(row["metadata_json"]), {}),
         )
-

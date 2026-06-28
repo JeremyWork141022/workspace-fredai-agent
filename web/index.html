@@ -8,7 +8,7 @@
   </head>
   <body>
     <main class="shell">
-      <aside class="sidebar" aria-label="Workspace context">
+      <aside class="sidebar" aria-label="Thread history">
         <div class="brand">
           <div class="mark" aria-hidden="true">F</div>
           <div>
@@ -17,24 +17,12 @@
           </div>
         </div>
 
-        <form id="contextForm" class="context-form">
-          <label>
-            Workspace
-            <input id="workspaceId" name="workspaceId" autocomplete="off" value="workspace_123" />
-          </label>
-          <label>
-            User
-            <input id="userId" name="userId" autocomplete="off" value="user_456" />
-          </label>
-          <label>
-            Session
-            <input id="sessionId" name="sessionId" autocomplete="off" placeholder="created after first reply" />
-          </label>
-          <div class="button-row">
-            <button id="newSessionButton" type="button">New Session</button>
-            <button id="copySessionButton" type="button">Copy Session</button>
-          </div>
-        </form>
+        <button id="newSessionButton" class="new-thread-button" type="button">
+          <span aria-hidden="true">+</span>
+          New Thread
+        </button>
+
+        <nav id="threadList" class="thread-list" aria-label="Shared threads"></nav>
 
         <div class="status-panel" aria-label="Server status">
           <div>
@@ -50,9 +38,29 @@
             <strong id="lastRequest">-</strong>
           </div>
         </div>
+
+        <input id="workspaceId" type="hidden" value="shared_workspace" />
+        <input id="userId" type="hidden" value="shared" />
+        <input id="sessionId" type="hidden" />
       </aside>
 
       <section class="chat" aria-label="Agent chat">
+        <header class="chat-header">
+          <div>
+            <span>Current thread</span>
+            <h2 id="currentThreadTitle">New Thread</h2>
+          </div>
+          <button id="copySessionButton" type="button">Copy Link</button>
+        </header>
+
+        <div id="shareBar" class="share-bar hidden" aria-live="polite">
+          <span id="shareCount">0 messages selected</span>
+          <div>
+            <button id="copyShareButton" type="button">Copy Excerpt Link</button>
+            <button id="clearShareButton" type="button">Clear</button>
+          </div>
+        </div>
+
         <div id="messages" class="messages" aria-live="polite"></div>
         <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
           Latest

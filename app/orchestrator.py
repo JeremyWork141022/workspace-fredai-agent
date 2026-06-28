@@ -49,6 +49,8 @@ class AgentResponse:
     status: str
     progress_messages: List[str]
     error: str = ""
+    user_message_id: Optional[int] = None
+    assistant_message_id: Optional[int] = None
 
     def as_dict(self) -> Dict[str, Any]:
         payload = {
@@ -59,6 +61,8 @@ class AgentResponse:
             "duration_ms": self.duration_ms,
             "status": self.status,
             "progress_messages": self.progress_messages,
+            "user_message_id": self.user_message_id,
+            "assistant_message_id": self.assistant_message_id,
         }
         if self.error:
             payload["error"] = self.error
@@ -239,6 +243,8 @@ class WorkspaceAgentOrchestrator:
             status=status,
             progress_messages=progress_messages,
             error=error_text,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
         )
 
     async def run_scheduled_job(self, job: ScheduledJob) -> str:

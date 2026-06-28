@@ -20,11 +20,16 @@ class SessionStoreTests(unittest.TestCase):
 
             recent = store.recent_model_messages(session.id, limit=8)
             matches = store.search_message_context(query="June operating", workspace_id="ws", limit=5)
+            renamed = store.rename_session(session.id, "June operating review")
+            loaded = store.get_session(session.id)
 
             self.assertEqual(user.role, "user")
             self.assertEqual(len(recent), 2)
             self.assertTrue(matches)
             self.assertEqual(matches[0].session_id, session.id)
+            self.assertIsNotNone(renamed)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.title, "June operating review")
 
 
 class MemoryStoreTests(unittest.TestCase):
@@ -86,4 +91,3 @@ class FredAIStreamParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

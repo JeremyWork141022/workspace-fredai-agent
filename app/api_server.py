@@ -31,6 +31,12 @@ class AgentRespondResponse(BaseModel):
     status: str
     progress_messages: List[str]
     error: Optional[str] = None
+    user_message_id: Optional[int] = None
+    assistant_message_id: Optional[int] = None
+
+
+class SessionRenameRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
 
 
 config = load_config()
@@ -121,6 +127,56 @@ async def list_sessions(workspace_id: str = "", user_id: str = "", limit: int = 
             }
             for session in sessions
         ],
+    }
+
+
+@app.get("/agent/sessions/{session_id}")
+async def get_session(session_id: str, limit: int = 500) -> Dict[str, Any]:
+    session = orchestrator.session_store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    messages = orchestrator.session_store.recent_messages(session.id, limit=max(1, min(limit, 2000)))
+    visible_messages = [message for message in messages if message.role in {"user", "assistant"}]
+    return {
+        "session": {
+            "id": session.id,
+            "workspace_id": session.workspace_id,
+            "user_id": session.user_id,
+            "title": session.title,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "metadata": session.metadata,
+        },
+        "messages": [
+            {
+                "id": message.id,
+                "session_id": message.session_id,
+                "role": message.role,
+                "text": message.text,
+                "content": message.content,
+                "created_at": message.created_at,
+                "metadata": message.metadata,
+            }
+            for message in visible_messages
+        ],
+    }
+
+
+@app.patch("/agent/sessions/{session_id}")
+async def rename_session(session_id: str, request: SessionRenameRequest) -> Dict[str, Any]:
+    session = orchestrator.session_store.rename_session(session_id, request.title)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {
+        "session": {
+            "id": session.id,
+            "workspace_id": session.workspace_id,
+            "user_id": session.user_id,
+            "title": session.title,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "metadata": session.metadata,
+        }
     }
 
 

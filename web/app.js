@@ -1,6 +1,13 @@
 const TEXT_INLINE_LIMIT = 1024 * 1024;
 const DEFAULT_BINARY_INLINE_LIMIT = 6 * 1024 * 1024;
-const MOCK_MODE = new URLSearchParams(window.location.search).get("mock") === "1";
+const QUERY = new URLSearchParams(window.location.search);
+const MOCK_MODE = QUERY.get("mock") === "1";
+const INITIAL_SESSION_ID = QUERY.get("session") || QUERY.get("thread") || "";
+const INITIAL_SHARE_FROM = QUERY.get("from") || "";
+const INITIAL_SHARE_TO = QUERY.get("to") || "";
+const SHARED_WORKSPACE_ID = "shared_workspace";
+const SHARED_USER_ID = "shared";
+const MOCK_THREADS_KEY = "workspace-fredai-mock-threads-v1";
 
 const TEXT_EXTENSIONS = new Set([
   ".txt",
@@ -33,8 +40,13 @@ const state = {
   abortController: null,
   sessionId: "",
   lastRequestId: "",
+  threads: [],
+  loadingThreadId: "",
+  renamingThreadId: "",
   messages: [],
   attachments: [],
+  selectedShareIds: new Set(),
+  activeShareRange: null,
   attachmentConfig: {
     inlineBase64: false,
     maxInlineBytes: 0,
@@ -47,9 +59,15 @@ const el = {
   modelName: document.querySelector("#modelName"),
   toolCount: document.querySelector("#toolCount"),
   lastRequest: document.querySelector("#lastRequest"),
+  currentThreadTitle: document.querySelector("#currentThreadTitle"),
+  threadList: document.querySelector("#threadList"),
   workspaceId: document.querySelector("#workspaceId"),
   userId: document.querySelector("#userId"),
   sessionId: document.querySelector("#sessionId"),
+  shareBar: document.querySelector("#shareBar"),
+  shareCount: document.querySelector("#shareCount"),
+  copyShareButton: document.querySelector("#copyShareButton"),
+  clearShareButton: document.querySelector("#clearShareButton"),
   messages: document.querySelector("#messages"),
   scrollToBottomButton: document.querySelector("#scrollToBottomButton"),
   chatForm: document.querySelector("#chatForm"),
@@ -107,6 +125,78 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function normalizeTitle(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function fallbackTitle(session) {
+  return normalizeTitle(session?.title) || "New Thread";
+}
+
+function currentThreadTitle() {
+  if (!state.sessionId) return "New Thread";
+  const thread = state.threads.find((item) => item.id === state.sessionId);
+  return fallbackTitle(thread || { title: state.messages.find((message) => message.role === "user")?.text });
+}
+
+function formatThreadTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function threadGroupLabel(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "Earlier";
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const time = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  if (time >= startOfToday) return "Today";
+  if (time >= startOfToday - 86400000) return "Yesterday";
+  return "Earlier";
+}
+
+function getMessageShareId(message) {
+  return String(message?.serverId || message?.id || "");
+}
+
+function selectedMessagesInOrder() {
+  return state.messages.filter((message) => state.selectedShareIds.has(getMessageShareId(message)));
+}
+
+function isMessageInActiveShareRange(message) {
+  if (!state.activeShareRange) return false;
+  const ids = state.messages.map(getMessageShareId);
+  const current = getMessageShareId(message);
+  const fromIndex = ids.indexOf(String(state.activeShareRange.from));
+  const toIndex = ids.indexOf(String(state.activeShareRange.to));
+  const currentIndex = ids.indexOf(current);
+  if (fromIndex < 0 || toIndex < 0 || currentIndex < 0) return false;
+  const start = Math.min(fromIndex, toIndex);
+  const end = Math.max(fromIndex, toIndex);
+  return currentIndex >= start && currentIndex <= end;
+}
+
+function buildThreadUrl(sessionId, range = null) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  if (MOCK_MODE) url.searchParams.set("mock", "1");
+  if (sessionId) url.searchParams.set("session", sessionId);
+  if (range?.from) url.searchParams.set("from", String(range.from));
+  if (range?.to) url.searchParams.set("to", String(range.to));
+  return url;
+}
+
+function replaceThreadUrl(sessionId, range = null) {
+  window.history.replaceState({}, "", buildThreadUrl(sessionId, range));
+}
+
 function setTurnMeta(text, tone = "") {
   el.turnMeta.textContent = text || "";
   el.turnMeta.className = tone ? `turn-meta ${tone}` : "turn-meta";
@@ -144,11 +234,110 @@ function updateComposerControls() {
 
 function render(options = {}) {
   const shouldPin = options.forceScroll || isNearBottom();
+  el.currentThreadTitle.textContent = currentThreadTitle();
+  renderThreads();
   renderMessages();
   renderAttachments();
+  renderShareBar();
   updateComposerControls();
   if (shouldPin) requestAnimationFrame(() => scrollToBottom(options.smooth ? "smooth" : "auto"));
   updateScrollButton();
+}
+
+function renderThreads() {
+  el.threadList.innerHTML = "";
+  if (!state.threads.length) {
+    const empty = document.createElement("p");
+    empty.className = "thread-empty";
+    empty.textContent = MOCK_MODE ? "Mock threads will appear here." : "No shared threads yet.";
+    el.threadList.appendChild(empty);
+    return;
+  }
+
+  const grouped = new Map();
+  for (const thread of state.threads) {
+    const label = threadGroupLabel(thread.updated_at || thread.created_at);
+    if (!grouped.has(label)) grouped.set(label, []);
+    grouped.get(label).push(thread);
+  }
+
+  for (const [label, threads] of grouped.entries()) {
+    const groupLabel = document.createElement("div");
+    groupLabel.className = "thread-group-label";
+    groupLabel.textContent = label;
+    el.threadList.appendChild(groupLabel);
+
+    for (const thread of threads) {
+      const item = document.createElement("div");
+      item.className = `thread-item${thread.id === state.sessionId ? " active" : ""}`;
+
+      if (thread.id === state.renamingThreadId) {
+        const editor = document.createElement("div");
+        editor.className = "thread-rename-editor";
+
+        const input = document.createElement("input");
+        input.className = "thread-rename-input";
+        input.value = fallbackTitle(thread);
+        input.maxLength = 120;
+        input.dataset.sessionId = thread.id;
+        input.setAttribute("aria-label", "Thread title");
+
+        const save = document.createElement("button");
+        save.type = "button";
+        save.dataset.action = "save-rename";
+        save.dataset.sessionId = thread.id;
+        save.textContent = "Save";
+
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.dataset.action = "cancel-rename";
+        cancel.dataset.sessionId = thread.id;
+        cancel.textContent = "Cancel";
+
+        editor.append(input, save, cancel);
+        item.appendChild(editor);
+        el.threadList.appendChild(item);
+        requestAnimationFrame(() => {
+          input.focus();
+          input.select();
+        });
+        continue;
+      }
+
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "thread-open";
+      open.dataset.action = "open-thread";
+      open.dataset.sessionId = thread.id;
+      const title = document.createElement("span");
+      title.className = "thread-title";
+      title.textContent = fallbackTitle(thread);
+      const time = document.createElement("span");
+      time.className = "thread-time";
+      time.textContent = formatThreadTime(thread.updated_at || thread.created_at);
+      open.append(title, time);
+
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "thread-rename";
+      rename.title = "Rename thread";
+      rename.setAttribute("aria-label", `Rename ${fallbackTitle(thread)}`);
+      rename.dataset.action = "rename-thread";
+      rename.dataset.sessionId = thread.id;
+      rename.textContent = "Edit";
+
+      item.append(open, rename);
+      el.threadList.appendChild(item);
+    }
+  }
+}
+
+function renderShareBar() {
+  const count = state.selectedShareIds.size;
+  el.shareBar.classList.toggle("hidden", count === 0);
+  el.shareCount.textContent =
+    count === 1 ? "1 message selected" : `${count} messages selected`;
+  el.copyShareButton.disabled = count === 0 || !state.sessionId;
 }
 
 function renderMessages() {
@@ -177,8 +366,13 @@ function renderMessages() {
 
 function renderMessage(message) {
   const article = document.createElement("article");
-  article.className = `message ${message.role} ${message.status || ""}`.trim();
+  const shareId = getMessageShareId(message);
+  const classes = ["message", message.role, message.status || ""];
+  if (state.selectedShareIds.has(shareId)) classes.push("share-selected");
+  if (isMessageInActiveShareRange(message)) classes.push("shared-highlight");
+  article.className = classes.filter(Boolean).join(" ");
   article.dataset.messageId = message.id;
+  article.dataset.shareId = shareId;
 
   if (message.role === "user" && message.attachments?.length) {
     article.appendChild(renderMessageAttachments(message.attachments));
@@ -229,6 +423,13 @@ function renderMessageActions(message) {
 
   const actions = document.createElement("div");
   actions.className = "message-actions";
+
+  const select = document.createElement("button");
+  select.type = "button";
+  select.textContent = state.selectedShareIds.has(getMessageShareId(message)) ? "Selected" : "Select";
+  select.dataset.action = "toggle-share-message";
+  select.dataset.messageId = message.id;
+  actions.appendChild(select);
 
   const copy = document.createElement("button");
   copy.type = "button";
@@ -472,6 +673,224 @@ async function refreshHealth() {
   }
 }
 
+function loadMockThreads() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MOCK_THREADS_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMockThreads(threads) {
+  localStorage.setItem(MOCK_THREADS_KEY, JSON.stringify(threads.slice(0, 100)));
+}
+
+function persistCurrentMockThread() {
+  if (!MOCK_MODE || !state.sessionId || !state.messages.length) return;
+  const threads = loadMockThreads().filter((thread) => thread.id !== state.sessionId);
+  const now = new Date().toISOString();
+  const firstUserMessage = state.messages.find((message) => message.role === "user");
+  const existingTitle =
+    state.threads.find((thread) => thread.id === state.sessionId)?.title ||
+    normalizeTitle(firstUserMessage?.text) ||
+    "New Thread";
+  threads.unshift({
+    id: state.sessionId,
+    workspace_id: SHARED_WORKSPACE_ID,
+    user_id: SHARED_USER_ID,
+    title: existingTitle,
+    created_at: state.messages[0]?.createdAt || now,
+    updated_at: now,
+    messages: state.messages.map((message) => ({
+      id: message.id,
+      serverId: getMessageShareId(message),
+      role: message.role,
+      status: message.status,
+      text: message.text,
+      createdAt: message.createdAt,
+      meta: message.meta || {},
+      attachments: message.attachments || [],
+    })),
+  });
+  saveMockThreads(threads);
+  state.threads = normalizeThreads(threads);
+}
+
+function normalizeThreads(sessions) {
+  return (sessions || [])
+    .map((session) => ({
+      id: String(session.id || session.session_id || ""),
+      workspace_id: session.workspace_id || SHARED_WORKSPACE_ID,
+      user_id: session.user_id || SHARED_USER_ID,
+      title: fallbackTitle(session),
+      created_at: session.created_at || "",
+      updated_at: session.updated_at || session.created_at || "",
+      messages: session.messages || [],
+    }))
+    .filter((session) => session.id)
+    .sort((a, b) => {
+      const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+      const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+}
+
+async function refreshThreads() {
+  if (MOCK_MODE) {
+    state.threads = normalizeThreads(loadMockThreads());
+    renderThreads();
+    return;
+  }
+
+  try {
+    const res = await fetch("/agent/sessions?limit=100");
+    if (!res.ok) throw new Error(`${res.status}`);
+    const data = await res.json();
+    state.threads = normalizeThreads(data.sessions || []);
+    renderThreads();
+  } catch {
+    setTurnMeta("Could not refresh thread list.", "warn");
+  }
+}
+
+function mapServerMessage(message) {
+  const metadata = message.metadata || {};
+  const storedStatus = String(metadata.status || "complete");
+  const status = storedStatus === "success" ? "complete" : storedStatus;
+  return {
+    id: `db_${message.id}`,
+    serverId: String(message.id),
+    role: message.role,
+    status: ["error", "cancelled"].includes(status) ? status : "complete",
+    text: message.text || "",
+    createdAt: message.created_at || new Date().toISOString(),
+    meta: {
+      durationMs: metadata.request_duration_ms,
+      toolNames: metadata.tool_names || [],
+      progressMessages: metadata.progress_messages || [],
+    },
+  };
+}
+
+function mapMockMessage(message) {
+  return {
+    id: message.id || createId("msg"),
+    serverId: String(message.serverId || message.id || createId("mock_msg")),
+    role: message.role,
+    status: message.status || "complete",
+    text: message.text || "",
+    createdAt: message.createdAt || new Date().toISOString(),
+    meta: message.meta || {},
+    attachments: message.attachments || [],
+  };
+}
+
+async function loadThread(sessionId, options = {}) {
+  if (!sessionId || state.busy) return;
+  state.loadingThreadId = sessionId;
+  setTurnMeta("Loading thread", "busy");
+  renderThreads();
+
+  try {
+    if (MOCK_MODE) {
+      const thread = loadMockThreads().find((item) => item.id === sessionId);
+      if (!thread) throw new Error("thread not found");
+      state.sessionId = thread.id;
+      state.messages = (thread.messages || []).map(mapMockMessage);
+      state.threads = normalizeThreads(loadMockThreads());
+    } else {
+      const res = await fetch(`/agent/sessions/${encodeURIComponent(sessionId)}?limit=1000`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      state.sessionId = data.session.id;
+      state.messages = (data.messages || []).map(mapServerMessage);
+      await refreshThreads();
+    }
+
+    state.selectedShareIds.clear();
+    state.activeShareRange = options.range || null;
+    state.lastRequestId = "";
+    el.sessionId.value = state.sessionId;
+    el.lastRequest.textContent = "-";
+    replaceThreadUrl(state.sessionId, state.activeShareRange);
+    setTurnMeta("");
+    render({ forceScroll: true });
+    if (state.activeShareRange) scrollToSharedRange();
+  } catch (err) {
+    setTurnMeta(`Could not load thread: ${err.message}`, "warn");
+  } finally {
+    state.loadingThreadId = "";
+    renderThreads();
+  }
+}
+
+async function renameThread(sessionId) {
+  const thread = state.threads.find((item) => item.id === sessionId);
+  if (!thread) return;
+  state.renamingThreadId = sessionId;
+  renderThreads();
+}
+
+async function saveThreadRename(sessionId) {
+  const input = el.threadList.querySelector(`.thread-rename-input[data-session-id="${CSS.escape(sessionId)}"]`);
+  const thread = state.threads.find((item) => item.id === sessionId);
+  const title = normalizeTitle(input?.value || "");
+  if (!thread || !title) {
+    state.renamingThreadId = "";
+    renderThreads();
+    return;
+  }
+  if (title === fallbackTitle(thread)) {
+    state.renamingThreadId = "";
+    renderThreads();
+    return;
+  }
+
+  if (MOCK_MODE) {
+    const threads = loadMockThreads();
+    const target = threads.find((item) => item.id === sessionId);
+    if (target) {
+      target.title = title;
+      target.updated_at = new Date().toISOString();
+      saveMockThreads(threads);
+      state.threads = normalizeThreads(threads);
+      state.renamingThreadId = "";
+      render();
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch(`/agent/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    state.renamingThreadId = "";
+    await refreshThreads();
+    render();
+  } catch (err) {
+    setTurnMeta(`Could not rename thread: ${err.message}`, "warn");
+  }
+}
+
+function cancelThreadRename() {
+  state.renamingThreadId = "";
+  renderThreads();
+}
+
+function scrollToSharedRange() {
+  requestAnimationFrame(() => {
+    const first = state.messages.find((message) => isMessageInActiveShareRange(message));
+    if (!first) return;
+    const target = el.messages.querySelector(`[data-message-id="${CSS.escape(first.id)}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   await sendCurrentComposer();
@@ -489,11 +908,14 @@ async function sendCurrentComposer() {
   const displayAttachments = state.attachments.map(toDisplayAttachment);
   const payloadAttachments = state.attachments.map(toPayloadAttachment);
   state.attachments = [];
+  state.selectedShareIds.clear();
+  state.activeShareRange = null;
   el.messageInput.value = "";
   autoResizeInput();
 
   const userMessage = {
     id: createId("msg"),
+    serverId: "",
     role: "user",
     status: "complete",
     text: message,
@@ -513,6 +935,7 @@ async function runAssistantRequest(userMessage, options = {}) {
 
   const assistantMessage = {
     id: createId("msg"),
+    serverId: "",
     role: "assistant",
     status: "running",
     text: "",
@@ -548,6 +971,8 @@ async function runAssistantRequest(userMessage, options = {}) {
       state.lastRequestId = data.request_id || "";
       el.sessionId.value = state.sessionId;
       el.lastRequest.textContent = state.lastRequestId || "-";
+      if (data.user_message_id) userMessage.serverId = String(data.user_message_id);
+      if (data.assistant_message_id) assistantMessage.serverId = String(data.assistant_message_id);
 
       assistantMessage.status = data.status === "success" ? "complete" : "error";
       assistantMessage.text = data.answer || "";
@@ -569,7 +994,10 @@ async function runAssistantRequest(userMessage, options = {}) {
   } finally {
     state.busy = false;
     state.abortController = null;
+    if (MOCK_MODE) persistCurrentMockThread();
+    await refreshThreads();
     setTurnMeta("");
+    if (state.sessionId) replaceThreadUrl(state.sessionId);
     render({ forceScroll: true });
     el.messageInput.focus();
   }
@@ -596,6 +1024,8 @@ async function completeMockAssistantResponse(userMessage, assistantMessage) {
   state.lastRequestId = `mock_req_${Date.now()}`;
   el.sessionId.value = state.sessionId;
   el.lastRequest.textContent = state.lastRequestId;
+  userMessage.serverId = userMessage.serverId || userMessage.id;
+  assistantMessage.serverId = assistantMessage.serverId || assistantMessage.id;
 
   assistantMessage.status = "complete";
   assistantMessage.text = [
@@ -859,12 +1289,15 @@ function newSession() {
   state.sessionId = "";
   state.lastRequestId = "";
   state.messages = [];
+  state.selectedShareIds.clear();
+  state.activeShareRange = null;
   for (const attachment of state.attachments) {
     if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   }
   state.attachments = [];
   el.sessionId.value = "";
   el.lastRequest.textContent = "-";
+  replaceThreadUrl("");
   setTurnMeta("");
   render({ forceScroll: true });
   el.messageInput.focus();
@@ -873,20 +1306,85 @@ function newSession() {
 async function copySession() {
   const value = el.sessionId.value.trim();
   if (!value) return;
-  await navigator.clipboard.writeText(value);
-  setTurnMeta("Session copied");
+  await navigator.clipboard.writeText(buildThreadUrl(value).toString());
+  setTurnMeta("Thread link copied");
   setTimeout(() => {
     if (!state.busy) setTurnMeta("");
   }, 1200);
+}
+
+function toggleShareMessage(id) {
+  const message = state.messages.find((item) => item.id === id);
+  if (!message) return;
+  const shareId = getMessageShareId(message);
+  if (state.selectedShareIds.has(shareId)) {
+    state.selectedShareIds.delete(shareId);
+  } else {
+    state.selectedShareIds.add(shareId);
+  }
+  render({ forceScroll: false });
+}
+
+async function copyShareLink() {
+  const selected = selectedMessagesInOrder();
+  if (!selected.length || !state.sessionId) return;
+  const range = {
+    from: getMessageShareId(selected[0]),
+    to: getMessageShareId(selected[selected.length - 1]),
+  };
+  const url = buildThreadUrl(state.sessionId, range).toString();
+  const title = currentThreadTitle();
+  await navigator.clipboard.writeText(
+    [
+      "Please look at this FredAI thread excerpt:",
+      url,
+      "",
+      `Thread: ${title}`,
+    ].join("\n"),
+  );
+  setTurnMeta("Excerpt link copied");
+  setTimeout(() => {
+    if (!state.busy) setTurnMeta("");
+  }, 1400);
+}
+
+function clearShareSelection() {
+  state.selectedShareIds.clear();
+  render({ forceScroll: false });
 }
 
 function handleMessageClick(event) {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
+  if (action === "toggle-share-message") toggleShareMessage(button.dataset.messageId);
   if (action === "copy-message") copyMessage(button.dataset.messageId);
   if (action === "edit-message") editMessage(button.dataset.messageId);
   if (action === "regenerate-message") regenerateMessage(button.dataset.messageId);
+}
+
+function handleThreadListClick(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const action = button.dataset.action;
+  const sessionId = button.dataset.sessionId || "";
+  if (action === "open-thread") loadThread(sessionId);
+  if (action === "rename-thread") renameThread(sessionId);
+  if (action === "save-rename") saveThreadRename(sessionId);
+  if (action === "cancel-rename") cancelThreadRename();
+}
+
+function handleThreadListKeydown(event) {
+  const input = event.target.closest(".thread-rename-input");
+  if (!input) return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    saveThreadRename(input.dataset.sessionId || "");
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelThreadRename();
+  }
 }
 
 function handleAttachmentClick(event) {
@@ -909,6 +1407,10 @@ el.chatForm.addEventListener("submit", sendMessage);
 el.stopButton.addEventListener("click", stopRequest);
 el.newSessionButton.addEventListener("click", newSession);
 el.copySessionButton.addEventListener("click", copySession);
+el.copyShareButton.addEventListener("click", copyShareLink);
+el.clearShareButton.addEventListener("click", clearShareSelection);
+el.threadList.addEventListener("click", handleThreadListClick);
+el.threadList.addEventListener("keydown", handleThreadListKeydown);
 el.scrollToBottomButton.addEventListener("click", () => scrollToBottom("smooth"));
 el.messages.addEventListener("scroll", updateScrollButton);
 el.messages.addEventListener("click", handleMessageClick);
@@ -944,6 +1446,27 @@ el.composerShell.addEventListener("drop", (event) => {
   addFiles(Array.from(event.dataTransfer?.files || []));
 });
 
-autoResizeInput();
-render({ forceScroll: true });
-refreshHealth();
+async function initializeApp() {
+  el.workspaceId.value = SHARED_WORKSPACE_ID;
+  el.userId.value = SHARED_USER_ID;
+  autoResizeInput();
+  render({ forceScroll: true });
+  await refreshHealth();
+  await refreshThreads();
+
+  if (INITIAL_SESSION_ID) {
+    const range =
+      INITIAL_SHARE_FROM || INITIAL_SHARE_TO
+        ? { from: INITIAL_SHARE_FROM || INITIAL_SHARE_TO, to: INITIAL_SHARE_TO || INITIAL_SHARE_FROM }
+        : null;
+    await loadThread(INITIAL_SESSION_ID, { range });
+  } else {
+    render({ forceScroll: true });
+  }
+
+  window.setInterval(() => {
+    if (!state.busy) refreshThreads();
+  }, 30000);
+}
+
+initializeApp();

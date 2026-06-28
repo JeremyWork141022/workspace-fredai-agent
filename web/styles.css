@@ -68,9 +68,9 @@ button:disabled {
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   min-width: 0;
-  padding: 22px;
+  padding: 18px 12px;
   border-right: 1px solid var(--line);
   background: var(--surface);
 }
@@ -80,6 +80,7 @@ button:disabled {
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+  padding: 0 6px 8px;
 }
 
 .mark {
@@ -104,6 +105,137 @@ button:disabled {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.new-thread-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.new-thread-button span {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.thread-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0 8px;
+}
+
+.thread-group-label {
+  padding: 14px 10px 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.thread-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+.thread-item.active,
+.thread-item:hover,
+.thread-item:focus-within {
+  background: var(--surface-strong);
+}
+
+.thread-open {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px 6px 10px;
+  text-align: left;
+}
+
+.thread-open:hover {
+  background: transparent;
+}
+
+.thread-title {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.thread-time {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.thread-rename {
+  width: 30px;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  padding: 0;
+}
+
+.thread-item:hover .thread-rename,
+.thread-item:focus-within .thread-rename,
+.thread-item.active .thread-rename {
+  opacity: 1;
+}
+
+.thread-rename-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  width: 100%;
+  padding: 4px;
+}
+
+.thread-rename-input {
+  height: 30px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.thread-rename-editor button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.thread-empty {
+  margin: 12px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .context-form {
@@ -162,6 +294,7 @@ textarea:focus {
 .status-panel {
   display: grid;
   gap: 10px;
+  margin-top: auto;
   padding-top: 6px;
   border-top: 1px solid var(--line);
 }
@@ -188,10 +321,70 @@ textarea:focus {
 .chat {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 100vh;
   background: var(--page);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px max(24px, calc((100vw - 300px - var(--thread-width)) / 2));
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+}
+
+.chat-header div {
+  min-width: 0;
+}
+
+.chat-header span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-header h2 {
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.chat-header button {
+  min-height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.share-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+  padding: 10px max(24px, calc((100vw - 300px - var(--thread-width)) / 2));
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.share-bar div {
+  display: flex;
+  gap: 8px;
+}
+
+.share-bar button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .messages {
@@ -199,7 +392,7 @@ textarea:focus {
   flex-direction: column;
   gap: 24px;
   min-height: 0;
-  padding: 32px max(24px, calc((100vw - 300px - var(--thread-width)) / 2)) 130px;
+  padding: 28px max(24px, calc((100vw - 300px - var(--thread-width)) / 2)) 130px;
   overflow-x: hidden;
   overflow-y: auto;
   scroll-behavior: smooth;
@@ -236,6 +429,25 @@ textarea:focus {
   width: 100%;
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+
+.message.share-selected .message-content {
+  outline: 2px solid rgba(15, 118, 110, 0.42);
+  outline-offset: 3px;
+}
+
+.message.shared-highlight .message-content {
+  animation: shareHighlight 2.4s ease-out;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.16);
+}
+
+@keyframes shareHighlight {
+  0% {
+    box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.16);
+  }
 }
 
 .message.user {
@@ -619,6 +831,12 @@ textarea:focus {
     min-height: calc(100vh - 300px);
   }
 
+  .chat-header,
+  .share-bar {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
   .messages {
     padding: 24px 18px 130px;
   }
@@ -637,9 +855,13 @@ textarea:focus {
     padding: 18px;
   }
 
-  .button-row,
+  .share-bar,
   .composer-footer {
     grid-template-columns: 1fr;
+  }
+
+  .share-bar {
+    display: grid;
   }
 
   .disclaimer {
