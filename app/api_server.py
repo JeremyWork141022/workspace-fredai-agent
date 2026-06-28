@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.attachment_extractors import attachment_capabilities
 from app.config import load_config
 from app.orchestrator import WorkspaceAgentOrchestrator
 from app.scheduler import CronScheduler
@@ -59,6 +60,7 @@ async def _shutdown() -> None:
 
 @app.get("/health")
 async def health() -> Dict[str, Any]:
+    attachments = attachment_capabilities()
     return {
         "ok": True,
         "model": config.model,
@@ -73,6 +75,13 @@ async def health() -> Dict[str, Any]:
             "jwt_token_optional": bool(config.fredai_jwt_token),
         },
         "memory": orchestrator.memory_manager.debug_state(),
+        "attachment_capabilities": attachments,
+        "capabilities": {
+            "streaming": False,
+            "session_history": False,
+            "server_cancel": False,
+            "attachments": attachments,
+        },
     }
 
 

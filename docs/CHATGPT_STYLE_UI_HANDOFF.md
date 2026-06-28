@@ -80,7 +80,24 @@ If `status` is not `success`, the UI renders the assistant message as an error b
 
 ## Attachment Payload Contract
 
-The UI is built to be compatible with newer backends that can handle CSV, Excel, PDF, DOCX, and other document formats.
+The UI is built to work with a backend that can convert conventional non-image, non-PDF files into prompt text before calling FredAI.
+
+Supported in this implementation step:
+
+- `.txt`, `.md`, `.log`, `.ini`, `.cfg`, `.toml`, `.yaml`, `.yml`, `.sql`
+- `.csv`, `.tsv`
+- `.json`, `.xml`, `.html`, `.htm`, `.rtf`
+- `.docx`
+- `.xlsx`
+- `.pptx`
+
+Deferred for the next step:
+
+- PDF
+- image formats
+- legacy binary `.doc`
+- legacy binary `.xls`
+- legacy binary `.ppt`
 
 Each attachment sent to `/agent/respond` has this shape:
 
@@ -102,9 +119,7 @@ Possible `type` values:
 
 - `text`
 - `spreadsheet`
-- `pdf`
 - `document`
-- `image`
 - `file`
 
 Possible `transfer` values:
@@ -112,7 +127,7 @@ Possible `transfer` values:
 - `inline_text`
   - Used for text-like files under the frontend text limit.
   - Payload includes `text`.
-  - Current backend can already use this because `_build_user_content` reads `attachment["text"]`.
+  - The backend parses CSV/TSV/JSON/XML/HTML/RTF where applicable.
 
 - `inline_base64`
   - Used for binary files only when the backend advertises inline binary support through `/health`.
@@ -127,25 +142,25 @@ Possible `transfer` values:
 
 - `metadata_only`
   - Used when file bytes are not sent.
-  - Backend should either ask the user for a workspace path, use a separate upload endpoint, or advertise inline base64 support.
+  - Backend tells FredAI that no document bytes were supplied.
 
 ## Important Attachment Safety Choice
 
-The UI does not send binary base64 by default because the current backend would include unknown attachment metadata in the model prompt. Sending raw base64 into the LLM prompt would be noisy and expensive.
+The UI only sends binary base64 when the backend advertises support. The backend must decode and parse the file before FredAI sees it. Raw base64 should never be passed directly into the LLM prompt.
 
-To enable binary file bytes, the backend should return this from `GET /health`:
+The backend now returns this from `GET /health`:
 
 ```json
 {
   "attachment_capabilities": {
     "inline_base64": true,
     "max_inline_bytes": 6291456,
-    "accepted_extensions": [".csv", ".xls", ".xlsx", ".pdf", ".doc", ".docx", ".txt", ".md"]
+    "accepted_extensions": [".cfg", ".csv", ".docx", ".htm", ".html", ".ini", ".json", ".log", ".md", ".pptx", ".rtf", ".sql", ".toml", ".tsv", ".txt", ".xlsx", ".xml", ".yaml", ".yml"]
   }
 }
 ```
 
-When `inline_base64` is true, the UI sends base64 for binary files up to `max_inline_bytes`. Your backend tools should decode and parse those bytes, not pass base64 directly to FredAI.
+When `inline_base64` is true, the UI sends base64 for binary files up to `max_inline_bytes`. The backend decodes and converts supported files to text before the FredAI call.
 
 ## Backend Deliverables Assumed For Work Computer
 
@@ -179,20 +194,33 @@ Backend should parse attachments by `transfer`:
 
 - `inline_text`
   - Use `text` directly.
-  - Good for `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.log`.
+  - Good for `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.xml`, `.yaml`, `.yml`, `.html`, `.htm`, `.rtf`, `.sql`, `.log`, `.ini`, `.cfg`, `.toml`.
 
 - `inline_base64`
   - Decode `data_base64`.
   - Use `extension` and `media_type` to choose parser.
-  - Route to tools for:
-    - CSV
-    - Excel `.xls` / `.xlsx`
-    - PDF
-    - Word `.doc` / `.docx`
+  - Current standard-library backend supports:
+    - CSV / TSV
+    - JSON
+    - XML
+    - HTML
+    - RTF
+    - DOCX
+    - XLSX
+    - PPTX
+    - plain text-like files
 
 - `metadata_only`
   - Treat as a file reference without bytes.
   - Ask for a path, tell the user bytes were not supplied, or use another upload channel.
+
+Unsupported in this step:
+
+- PDF
+- images
+- legacy binary `.doc`
+- legacy binary `.xls`
+- legacy binary `.ppt`
 
 ### 3. Advertise Capabilities Through `/health`
 
@@ -208,7 +236,7 @@ Recommended shape:
   "attachment_capabilities": {
     "inline_base64": true,
     "max_inline_bytes": 6291456,
-    "accepted_extensions": [".csv", ".xls", ".xlsx", ".pdf", ".doc", ".docx", ".txt", ".md"]
+    "accepted_extensions": [".cfg", ".csv", ".docx", ".htm", ".html", ".ini", ".json", ".log", ".md", ".pptx", ".rtf", ".sql", ".toml", ".tsv", ".txt", ".xlsx", ".xml", ".yaml", ".yml"]
   },
   "capabilities": {
     "streaming": false,
@@ -343,6 +371,6 @@ Mock mode:
 - does not require FredAI credentials
 - generates a local browser-only assistant response in `web/app.js`
 - still exercises the real thread rendering, composer, pending state, file chips, copy/edit/regenerate buttons, trace metadata, and progress details
-- advertises mock inline binary support so CSV, Excel, PDF, DOCX, and text attachments can be visually tested
+- advertises mock inline binary support so CSV, XLSX, DOCX, PPTX, JSON, XML, RTF, HTML, and text attachments can be visually tested
 
 Mock mode does not prove backend orchestration, memory, FredAI auth, real tools, file parsing, or server cancellation. It proves the frontend UX and request-shaping logic.

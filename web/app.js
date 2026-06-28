@@ -18,11 +18,14 @@ const TEXT_EXTENSIONS = new Set([
 
 const SUPPORTED_EXTENSIONS = new Set([
   ...TEXT_EXTENSIONS,
-  ".xls",
+  ".tsv",
   ".xlsx",
-  ".pdf",
-  ".doc",
   ".docx",
+  ".pptx",
+  ".rtf",
+  ".html",
+  ".htm",
+  ".sql",
 ]);
 
 const state = {
@@ -84,8 +87,9 @@ function classifyFile(file) {
   const extension = getExtension(file.name);
   if (file.type.startsWith("image/")) return "image";
   if (extension === ".pdf") return "pdf";
-  if (extension === ".doc" || extension === ".docx") return "document";
-  if (extension === ".xls" || extension === ".xlsx" || extension === ".csv") {
+  if (extension === ".doc" || extension === ".docx" || extension === ".rtf") return "document";
+  if (extension === ".ppt" || extension === ".pptx") return "presentation";
+  if (extension === ".xls" || extension === ".xlsx" || extension === ".csv" || extension === ".tsv") {
     return "spreadsheet";
   }
   if (TEXT_EXTENSIONS.has(extension) || file.type.startsWith("text/")) return "text";
@@ -783,9 +787,13 @@ function inferMediaType(extension) {
     ".txt": "text/plain",
     ".md": "text/markdown",
     ".json": "application/json",
+    ".xml": "application/xml",
+    ".html": "text/html",
+    ".htm": "text/html",
     ".pdf": "application/pdf",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".xls": "application/vnd.ms-excel",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   };

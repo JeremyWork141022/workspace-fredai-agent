@@ -6,11 +6,11 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
+from app.attachment_extractors import extract_attachment
 from app.config import AppConfig, workspace_root
 from app.fredai_auth import FredAIAuthError
 from app.fredai_client import ChatCompletionResult, FredAIClient, FredAIClientError
@@ -22,8 +22,6 @@ from app.tools import ToolContext, ToolRegistry, build_core_tool_registry
 
 
 logger = logging.getLogger(__name__)
-
-TEXT_FILE_EXTENSIONS = {".txt", ".md", ".csv", ".log", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
 
 
 @dataclass
@@ -526,38 +524,14 @@ Runtime architecture:
 
     def _build_user_content(self, message: str, attachments: List[Dict[str, Any]]) -> str:
         parts = [message.strip() or "[Empty user message]"]
+        root = workspace_root()
         for index, attachment in enumerate(attachments, start=1):
             if not isinstance(attachment, dict):
                 parts.append(f"[Attachment {index}: {attachment}]")
                 continue
-            text = str(attachment.get("text") or "").strip()
-            path_text = str(attachment.get("path") or "").strip()
-            media_type = str(attachment.get("media_type") or attachment.get("type") or "").strip()
-            if text:
-                parts.append(f"[Attachment {index} text]\n{text[:12000]}")
-                continue
-            if path_text:
-                parts.append(self._attachment_path_summary(index, path_text, media_type))
-                continue
-            parts.append(f"[Attachment {index} metadata]\n{json.dumps(attachment, ensure_ascii=False)}")
+            extraction = extract_attachment(attachment, index=index, workspace_root=root)
+            parts.append(extraction.render(index))
         return "\n\n".join(parts)
-
-    def _attachment_path_summary(self, index: int, path_text: str, media_type: str) -> str:
-        root = workspace_root()
-        raw_path = Path(path_text)
-        candidate = raw_path if raw_path.is_absolute() else root / raw_path
-        try:
-            path = candidate.resolve()
-        except OSError:
-            return f"[Attachment {index}: invalid path {path_text}]"
-        if path != root and root not in path.parents:
-            return f"[Attachment {index}: path outside workspace root omitted: {path_text}]"
-        if not path.exists() or not path.is_file():
-            return f"[Attachment {index}: file not found: {path_text}]"
-        if media_type.startswith("text/") or path.suffix.lower() in TEXT_FILE_EXTENSIONS:
-            snippet = path.read_text(encoding="utf-8", errors="replace")[:12000]
-            return f"[Attachment {index}: text file {path.name}]\n{snippet}"
-        return f"[Attachment {index}: file {path.name}, media_type={media_type or 'unknown'}, path={path}]"
 
     def _chat_payload(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -696,4 +670,3 @@ Runtime architecture:
                 await client.post(self._config.delivery_url, json=payload)
         except Exception as exc:
             logger.warning("Scheduled result delivery failed for %s: %s", job.id, exc)
-
