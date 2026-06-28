@@ -14,6 +14,12 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
+def _one_pixel_png() -> bytes:
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    )
+
+
 def _minimal_docx(text: str) -> bytes:
     xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -157,13 +163,32 @@ class AttachmentExtractorTests(unittest.TestCase):
         self.assertIn("Legacy .doc", result.text)
         self.assertIn("Unsupported", result.warning)
 
-    def test_capabilities_exclude_pdf_for_now(self) -> None:
+    def test_inline_base64_image_creates_vision_part(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = extract_attachment(
+                {
+                    "name": "pixel.png",
+                    "extension": ".png",
+                    "media_type": "image/png",
+                    "data_base64": _b64(_one_pixel_png()),
+                },
+                index=1,
+                workspace_root=Path(tmp),
+            )
+
+        self.assertIn("FredAI vision", result.text)
+        self.assertEqual(len(result.media_parts), 1)
+        self.assertEqual(result.media_parts[0]["type"], "image_url")
+        self.assertTrue(result.media_parts[0]["image_url"]["url"].startswith("data:image/png;base64,"))
+
+    def test_capabilities_include_pdf_and_images(self) -> None:
         caps = attachment_capabilities()
         self.assertIn(".docx", caps["accepted_extensions"])
         self.assertIn(".xlsx", caps["accepted_extensions"])
         self.assertIn(".pptx", caps["accepted_extensions"])
-        self.assertNotIn(".pdf", caps["accepted_extensions"])
-        self.assertIn(".pdf", caps["unsupported_extensions"])
+        self.assertIn(".pdf", caps["accepted_extensions"])
+        self.assertIn(".png", caps["accepted_extensions"])
+        self.assertNotIn(".pdf", caps["unsupported_extensions"])
 
 
 if __name__ == "__main__":

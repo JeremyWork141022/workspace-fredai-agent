@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Workspace FredAI Agent</title>
+    <title>CRT Analytics</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="shell">
       <aside class="sidebar" aria-label="Thread history">
         <div class="brand">
-          <div class="mark" aria-hidden="true">F</div>
+          <div class="mark" aria-hidden="true">C</div>
           <div>
-            <h1>Workspace FredAI Agent</h1>
+            <h1>CRT Analytics Agent</h1>
             <p id="connectionStatus">Checking server</p>
           </div>
         </div>
@@ -48,18 +48,9 @@
         <header class="chat-header">
           <div>
             <span>Current thread</span>
-            <h2 id="currentThreadTitle">New Thread</h2>
+            <h2 id="currentThreadTitle">Ask me anything about CRT Analytics</h2>
           </div>
-          <button id="copySessionButton" type="button">Copy Link</button>
         </header>
-
-        <div id="shareBar" class="share-bar hidden" aria-live="polite">
-          <span id="shareCount">0 messages selected</span>
-          <div>
-            <button id="copyShareButton" type="button">Copy Excerpt Link</button>
-            <button id="clearShareButton" type="button">Clear</button>
-          </div>
-        </div>
 
         <div id="messages" class="messages" aria-live="polite"></div>
         <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
@@ -74,18 +65,26 @@
               class="file-input"
               type="file"
               multiple
-              accept=".csv,.tsv,.xlsx,.docx,.pptx,.rtf,.txt,.md,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.log,.html,.htm,.sql"
+              accept=".pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tif,.tiff,.csv,.tsv,.xlsx,.docx,.pptx,.rtf,.txt,.md,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.log,.html,.htm,.sql"
             />
             <button id="attachButton" class="icon-button" type="button" title="Attach files" aria-label="Attach files">
               +
             </button>
-            <textarea id="messageInput" rows="1" placeholder="Ask anything about your workspace"></textarea>
-            <button id="stopButton" class="primary-button hidden" type="button">Stop</button>
-            <button id="sendButton" class="primary-button" type="submit">Send</button>
+            <textarea id="messageInput" rows="1" placeholder="Ask me about CRT Analytics"></textarea>
+            <div class="composer-actions">
+              <button id="copySessionButton" class="composer-link-button" type="button">Share Thread</button>
+              <div id="shareBar" class="share-bar hidden" aria-live="polite">
+                <span id="shareCount">0 selected</span>
+                <button id="copyShareButton" type="button">Share Selected</button>
+                <button id="clearShareButton" type="button">Clear</button>
+              </div>
+              <button id="stopButton" class="primary-button hidden" type="button">Stop</button>
+              <button id="sendButton" class="primary-button" type="submit">Send</button>
+            </div>
           </div>
           <div class="composer-footer">
             <div id="turnMeta" class="turn-meta"></div>
-            <p class="disclaimer">FredAI can make mistakes. Check important work outputs.</p>
+            <p class="disclaimer">CRT Analytics can make mistakes. Check important work outputs.</p>
           </div>
         </form>
       </section>

@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from app.attachment_extractors import extract_attachment
 from app.config import AppConfig, workspace_root
+from app.knowledge_store import DEFAULT_KNOWLEDGE_BASE, KnowledgeStore
 from app.memory_manager import AgentMemoryManager
 from app.session_store import SessionStore
 
@@ -23,6 +25,7 @@ class ToolContext:
     config: AppConfig
     session_store: SessionStore
     memory_manager: AgentMemoryManager
+    knowledge_store: KnowledgeStore
     summarize_session_search: Optional[SessionSearchSummarizer] = None
 
     @property
@@ -85,7 +88,13 @@ class ToolRegistry:
             return {"ok": False, "tool": name, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def build_core_tool_registry(*, session_store: SessionStore, memory_manager: AgentMemoryManager, config: AppConfig) -> ToolRegistry:
+def build_core_tool_registry(
+    *,
+    session_store: SessionStore,
+    memory_manager: AgentMemoryManager,
+    knowledge_store: KnowledgeStore,
+    config: AppConfig,
+) -> ToolRegistry:
     registry = ToolRegistry()
 
     def make_memory_tool(tool_name: str) -> ToolHandler:
@@ -296,6 +305,243 @@ def build_core_tool_registry(*, session_store: SessionStore, memory_manager: Age
         candidates.sort(key=lambda item: (-int(item["score"]), str(item["path"])))
         return {"query": args.get("query"), "matches": candidates[:limit]}
 
+    async def knowledge_ingest(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(args.get("title") or "").strip()
+        content = str(args.get("content") or "").strip()
+        source_path = str(args.get("source_path") or "").strip()
+        source_uri = str(args.get("source_uri") or "").strip()
+        source_type = str(args.get("source_type") or ("workspace_path" if source_path else "manual")).strip()
+        file_name = str(args.get("file_name") or "").strip()
+        file_extension = str(args.get("file_extension") or "").strip()
+        warning = ""
+
+        if source_path and not content:
+            path = _resolve_workspace_path(source_path, must_exist=True, file_only=True)
+            extraction = extract_attachment(
+                {"path": str(path), "name": path.name, "extension": path.suffix},
+                index=1,
+                workspace_root=workspace_root(),
+            )
+            content = extraction.text
+            title = title or path.stem
+            source_uri = source_uri or str(path)
+            source_type = "workspace_path"
+            file_name = file_name or path.name
+            file_extension = file_extension or path.suffix.lower()
+            warning = extraction.warning
+
+        if not content:
+            return {
+                "ingested": False,
+                "error": "content or source_path is required. If the user attached a file, pass the extracted attachment text as content.",
+            }
+
+        tags = args.get("tags")
+        metadata = args.get("metadata")
+        result = context.knowledge_store.ingest_document(
+            workspace_id=context.workspace_id,
+            title=title or "Untitled knowledge document",
+            content=content,
+            knowledge_base=str(args.get("knowledge_base") or DEFAULT_KNOWLEDGE_BASE),
+            source_type=source_type,
+            source_uri=source_uri,
+            file_name=file_name,
+            file_extension=file_extension,
+            process=str(args.get("process") or ""),
+            doc_type=str(args.get("doc_type") or ""),
+            tags=tags if isinstance(tags, list) else [],
+            metadata=metadata if isinstance(metadata, dict) else {},
+            summary=str(args.get("summary") or ""),
+            chunk_strategy=str(args.get("chunk_strategy") or "auto"),
+        )
+        result["ingested"] = True
+        if warning:
+            result["parser_warning"] = warning
+        return result
+
+    async def knowledge_search(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {"error": "query is required"}
+        limit = max(1, min(int(args.get("limit") or 8), 20))
+        results = context.knowledge_store.search_chunks(
+            workspace_id=context.workspace_id,
+            query=query,
+            limit=limit,
+            knowledge_base=str(args.get("knowledge_base") or ""),
+            process=str(args.get("process") or ""),
+            doc_type=str(args.get("doc_type") or ""),
+        )
+        refs = [
+            {"chunk_id": item.chunk.id, "document_id": item.chunk.document_id, "score": item.score}
+            for item in results
+        ]
+        context.knowledge_store.record_retrieval_event(
+            workspace_id=context.workspace_id,
+            session_id=context.session_id,
+            user_id=context.user_id,
+            query=query,
+            tool_name="knowledge_search",
+            result_refs=refs,
+            metadata={"limit": limit},
+        )
+        return {
+            "query": query,
+            "count": len(results),
+            "results": [context.knowledge_store.search_result_to_dict(item) for item in results],
+            "mandatory_next_step": "Call knowledge_read with the relevant chunk_ids before answering factual EVA/Macs/process questions.",
+        }
+
+    async def knowledge_grep(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        pattern = str(args.get("pattern") or "").strip()
+        if not pattern:
+            return {"error": "pattern is required"}
+        limit = max(1, min(int(args.get("limit") or 8), 20))
+        results = context.knowledge_store.grep_chunks(
+            workspace_id=context.workspace_id,
+            pattern=pattern,
+            limit=limit,
+            case_sensitive=bool(args.get("case_sensitive") or False),
+            knowledge_base=str(args.get("knowledge_base") or ""),
+            process=str(args.get("process") or ""),
+            doc_type=str(args.get("doc_type") or ""),
+        )
+        refs = [{"chunk_id": item.chunk.id, "document_id": item.chunk.document_id, "score": item.score} for item in results]
+        context.knowledge_store.record_retrieval_event(
+            workspace_id=context.workspace_id,
+            session_id=context.session_id,
+            user_id=context.user_id,
+            query=pattern,
+            tool_name="knowledge_grep",
+            result_refs=refs,
+            metadata={"limit": limit, "case_sensitive": bool(args.get("case_sensitive") or False)},
+        )
+        return {
+            "pattern": pattern,
+            "count": len(results),
+            "results": [context.knowledge_store.search_result_to_dict(item) for item in results],
+            "mandatory_next_step": "Call knowledge_read with the relevant chunk_ids before answering from these matches.",
+        }
+
+    async def knowledge_read(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        chunk_ids = args.get("chunk_ids")
+        indexes = args.get("chunk_indexes")
+        result = context.knowledge_store.read_context(
+            workspace_id=context.workspace_id,
+            chunk_ids=chunk_ids if isinstance(chunk_ids, list) else [],
+            document_id=str(args.get("document_id") or ""),
+            chunk_indexes=indexes if isinstance(indexes, list) else [],
+            include_parent=bool(args.get("include_parent", True)),
+            include_neighbors=bool(args.get("include_neighbors", True)),
+            max_chars=int(args.get("max_chars") or 60000),
+        )
+        refs = [{"chunk_id": chunk.get("chunk_id"), "document_id": chunk.get("document_id")} for chunk in result.get("chunks", [])]
+        context.knowledge_store.record_retrieval_event(
+            workspace_id=context.workspace_id,
+            session_id=context.session_id,
+            user_id=context.user_id,
+            query=str(args.get("document_id") or ",".join(chunk_ids if isinstance(chunk_ids, list) else [])),
+            tool_name="knowledge_read",
+            result_refs=refs,
+            metadata={"count": result.get("count")},
+        )
+        return result
+
+    async def wiki_search(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        query = str(args.get("query") or "").strip()
+        pages = context.knowledge_store.search_wiki(
+            workspace_id=context.workspace_id,
+            query=query,
+            limit=max(1, min(int(args.get("limit") or 8), 20)),
+            page_type=str(args.get("page_type") or ""),
+        )
+        return {
+            "query": query,
+            "count": len(pages),
+            "pages": [
+                {
+                    "slug": page.slug,
+                    "title": page.title,
+                    "page_type": page.page_type,
+                    "summary": page.summary,
+                    "links": page.links,
+                    "chunk_ref_count": len(page.chunk_refs),
+                    "updated_at": page.updated_at,
+                }
+                for page in pages
+            ],
+            "next_step": "Call wiki_read for relevant slugs. Use knowledge_read on chunk_refs when exact source evidence is needed.",
+        }
+
+    async def wiki_read(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        slugs = args.get("slugs")
+        if isinstance(slugs, str):
+            slugs = [slugs]
+        return context.knowledge_store.read_wiki(
+            workspace_id=context.workspace_id,
+            slugs=slugs if isinstance(slugs, list) else [],
+            include_linked=bool(args.get("include_linked", True)),
+        )
+
+    async def wiki_write(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        source_refs = args.get("source_refs")
+        chunk_refs = args.get("chunk_refs")
+        aliases = args.get("aliases")
+        metadata = args.get("metadata")
+        page = context.knowledge_store.upsert_wiki_page(
+            workspace_id=context.workspace_id,
+            slug=str(args.get("slug") or args.get("title") or ""),
+            title=str(args.get("title") or ""),
+            page_type=str(args.get("page_type") or "concept"),
+            summary=str(args.get("summary") or ""),
+            content=str(args.get("content") or ""),
+            aliases=aliases if isinstance(aliases, list) else [],
+            status=str(args.get("status") or "active"),
+            source_refs=source_refs if isinstance(source_refs, list) else [],
+            chunk_refs=chunk_refs if isinstance(chunk_refs, list) else [],
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+        return {
+            "saved": True,
+            "page": context.knowledge_store.wiki_to_dict(page),
+            "guidance": "Wiki page saved. For corrections, preserve source_refs/chunk_refs and log unresolved uncertainty with wiki_issue.",
+        }
+
+    async def wiki_issue(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        action = str(args.get("action") or "create").strip()
+        if action == "list":
+            issues = context.knowledge_store.list_wiki_issues(
+                workspace_id=context.workspace_id,
+                slug=str(args.get("slug") or ""),
+                status=str(args.get("status") or "pending"),
+                limit=int(args.get("limit") or 20),
+            )
+            return {"count": len(issues), "issues": [context.knowledge_store.issue_to_dict(issue) for issue in issues]}
+        if action == "update":
+            issue = context.knowledge_store.update_wiki_issue(
+                workspace_id=context.workspace_id,
+                issue_id=str(args.get("issue_id") or ""),
+                status=str(args.get("status") or "pending"),
+                metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else {},
+            )
+            if not issue:
+                return {"updated": False, "error": "issue not found"}
+            return {"updated": True, "issue": context.knowledge_store.issue_to_dict(issue)}
+        issue = context.knowledge_store.create_wiki_issue(
+            workspace_id=context.workspace_id,
+            slug=str(args.get("slug") or ""),
+            issue_type=str(args.get("issue_type") or "other"),
+            description=str(args.get("description") or ""),
+            evidence=str(args.get("evidence") or ""),
+            created_by=context.user_id,
+            metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else {},
+        )
+        return {
+            "created": True,
+            "issue": context.knowledge_store.issue_to_dict(issue),
+            "next_step": "Use knowledge_search/knowledge_read to verify the correction, then wiki_write to update the page if supported.",
+        }
+
     for schema in memory_manager.get_tool_schemas():
         registry.register(
             ToolSpec(
@@ -415,6 +661,216 @@ def build_core_tool_registry(*, session_store: SessionStore, memory_manager: Age
             handler=workspace_find_files,
         )
     )
+    registry.register(
+        ToolSpec(
+            name="knowledge_ingest",
+            toolset="knowledge",
+            description=(
+                "Ingest a source document into the WeKnora-style knowledge memory. Use when the user asks to digest, index, "
+                "remember, or add a document/wiki/source file. Prefer source_path for workspace files; use content when the "
+                "document text is already present in the current message or attachment. The tool creates parent/child chunks "
+                "with source metadata for later citation-backed retrieval."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Human-readable source title."},
+                    "content": {"type": "string", "description": "Extracted document text/Markdown when available in context."},
+                    "source_path": {"type": "string", "description": "Optional file path under WORKSPACE_AGENT_ROOT to parse and ingest."},
+                    "source_uri": {"type": "string", "description": "Stable source identifier such as file path, wiki URL, or document URL."},
+                    "source_type": {"type": "string", "enum": ["manual", "attachment", "workspace_path", "wiki", "url", "other"]},
+                    "knowledge_base": {"type": "string", "default": DEFAULT_KNOWLEDGE_BASE},
+                    "process": {"type": "string", "description": "Process/model family, e.g. EVA, Macs, Model Governance."},
+                    "doc_type": {"type": "string", "description": "Document type, e.g. user_guide, methodology, model_review, runbook, script."},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                    "summary": {"type": "string"},
+                    "file_name": {"type": "string"},
+                    "file_extension": {"type": "string"},
+                    "chunk_strategy": {"type": "string", "enum": ["auto", "heading", "heuristic", "legacy", "recursive"], "default": "auto"},
+                },
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+            handler=knowledge_ingest,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="knowledge_search",
+            toolset="knowledge",
+            description=(
+                "Search source-document chunks for semantic or broad factual evidence. Use for EVA/Macs/process questions "
+                "when the answer should be grounded in ingested documents. This returns candidate snippets only; call "
+                "knowledge_read on the selected chunk_ids before answering."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "knowledge_base": {"type": "string"},
+                    "process": {"type": "string"},
+                    "doc_type": {"type": "string"},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=knowledge_search,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="knowledge_grep",
+            toolset="knowledge",
+            description=(
+                "Exact keyword/regex retrieval over ingested source chunks. Use for script names, metric names, field names, "
+                "control IDs, model names, dates, or quoted terms. This is an index-style search; call knowledge_read before "
+                "answering from the result."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "case_sensitive": {"type": "boolean", "default": False},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "knowledge_base": {"type": "string"},
+                    "process": {"type": "string"},
+                    "doc_type": {"type": "string"},
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+            },
+            handler=knowledge_grep,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="knowledge_read",
+            toolset="knowledge",
+            description=(
+                "Deep-read full source context after knowledge_search or knowledge_grep. Fetches selected chunks plus optional "
+                "parent and neighboring chunks so answers can cite the document, section, source, and chunk. Use this before "
+                "final factual answers about EVA/Macs/process documentation."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "chunk_ids": {"type": "array", "items": {"type": "string"}},
+                    "document_id": {"type": "string"},
+                    "chunk_indexes": {"type": "array", "items": {"type": "integer"}},
+                    "include_parent": {"type": "boolean", "default": True},
+                    "include_neighbors": {"type": "boolean", "default": True},
+                    "max_chars": {"type": "integer", "minimum": 1000, "maximum": 120000},
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=knowledge_read,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="wiki_search",
+            toolset="wiki",
+            description=(
+                "Search curated wiki pages that synthesize process knowledge. Use first for conceptual questions, process maps, "
+                "relationships, and known summaries. Then call wiki_read for the relevant pages."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "page_type": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=wiki_search,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="wiki_read",
+            toolset="wiki",
+            description=(
+                "Read full curated wiki pages by slug, including linked-page summaries. Use for high-level EVA/Macs answers; "
+                "if the page has chunk_refs and exact evidence is needed, call knowledge_read next."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "slugs": {"type": "array", "items": {"type": "string"}},
+                    "include_linked": {"type": "boolean", "default": True},
+                },
+                "required": ["slugs"],
+                "additionalProperties": False,
+            },
+            handler=wiki_read,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="wiki_write",
+            toolset="wiki",
+            description=(
+                "Create or update a curated wiki page. Use after reading source chunks or when the user explicitly supplies a "
+                "correction. Preserve source_refs/chunk_refs so the wiki remains auditable and linked across processes."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string"},
+                    "title": {"type": "string"},
+                    "page_type": {
+                        "type": "string",
+                        "enum": ["process", "model", "metric", "script", "dataset", "control", "runbook", "concept", "index", "issue_log"],
+                    },
+                    "summary": {"type": "string"},
+                    "content": {"type": "string", "description": "Markdown. Use [[slug|label]] links to connect pages."},
+                    "aliases": {"type": "array", "items": {"type": "string"}},
+                    "status": {"type": "string", "enum": ["draft", "active", "needs_review"], "default": "active"},
+                    "source_refs": {"type": "array", "items": {"type": "object"}},
+                    "chunk_refs": {"type": "array", "items": {"type": "object"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["title", "summary", "content"],
+                "additionalProperties": False,
+            },
+            handler=wiki_write,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="wiki_issue",
+            toolset="wiki",
+            description=(
+                "Create, list, or update wiki correction issues. Use when a user says the agent/wiki is wrong, missing, "
+                "contradictory, stale, or mixed across entities. Do not silently overwrite governed process knowledge."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["create", "list", "update"], "default": "create"},
+                    "issue_id": {"type": "string"},
+                    "slug": {"type": "string"},
+                    "issue_type": {
+                        "type": "string",
+                        "enum": ["wrong_fact", "missing_info", "contradiction", "out_of_date", "mixed_entities", "other"],
+                    },
+                    "description": {"type": "string"},
+                    "evidence": {"type": "string"},
+                    "status": {"type": "string", "enum": ["pending", "resolved", "rejected", "deferred"]},
+                    "metadata": {"type": "object"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+                "required": ["action"],
+                "additionalProperties": False,
+            },
+            handler=wiki_issue,
+        )
+    )
     return registry
 
 
@@ -497,4 +953,3 @@ def _resolve_workspace_path(path: str, *, must_exist: bool, file_only: bool) -> 
     if file_only and resolved.exists() and not resolved.is_file():
         raise ValueError(f"Path is not a file: {path}")
     return resolved
-

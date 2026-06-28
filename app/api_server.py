@@ -72,15 +72,8 @@ async def health() -> Dict[str, Any]:
         "model": config.model,
         "fredai_base_url": config.fredai_base_url,
         "scheduler_enabled": config.scheduler_enabled,
-        "fredai_auth_config": {
-            "oauth_url": bool(config.fredai_oauth_url),
-            "client_id": bool(config.fredai_client_id),
-            "client_secret": bool(config.fredai_client_secret),
-            "oauth_username": bool(config.fredai_oauth_username),
-            "oauth_password_b64": bool(config.fredai_oauth_password_b64),
-            "jwt_token_optional": bool(config.fredai_jwt_token),
-        },
         "memory": orchestrator.memory_manager.debug_state(),
+        "knowledge": orchestrator.knowledge_store.debug_state(),
         "attachment_capabilities": attachments,
         "capabilities": {
             "streaming": False,
@@ -94,6 +87,22 @@ async def health() -> Dict[str, Any]:
 @app.get("/")
 async def ui() -> FileResponse:
     return FileResponse(WEB_ROOT / "index.html")
+
+
+@app.get("/agent/tools")
+async def list_tools() -> Dict[str, Any]:
+    tools = orchestrator.tool_registry.definitions()
+    return {
+        "count": len(tools),
+        "tools": [
+            {
+                "name": str(tool.get("function", {}).get("name") or ""),
+                "description": str(tool.get("function", {}).get("description") or ""),
+                "parameters": tool.get("function", {}).get("parameters") or {},
+            }
+            for tool in tools
+        ],
+    }
 
 
 @app.post("/agent/respond", response_model=AgentRespondResponse)

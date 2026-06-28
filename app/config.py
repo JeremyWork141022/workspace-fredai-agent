@@ -14,6 +14,7 @@ DEFAULT_SESSION_CONTEXT_MESSAGES = 16
 DEFAULT_MEMORY_CHAR_LIMIT = 2800
 DEFAULT_USER_MEMORY_CHAR_LIMIT = 1600
 DEFAULT_SESSION_SEARCH_LIMIT = 3
+DEFAULT_KNOWLEDGE_PREFETCH_ENABLED = True
 
 DEFAULT_SYSTEM_PROMPT = """You are the Workspace FredAI Agent.
 
@@ -128,14 +129,6 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
-def _env_first(*names: str, default: str = "") -> str:
-    for name in names:
-        value = os.getenv(name, "").strip()
-        if value:
-            return value
-    return default
-
-
 def _fredai_base_url() -> str:
     preset = os.getenv("FREDAI_PRESET", "Direct_Azure").strip() or "Direct_Azure"
     override_by_preset = {
@@ -174,6 +167,7 @@ class AppConfig:
     trace_enabled: bool
     trace_full_media: bool
     delivery_url: str
+    knowledge_prefetch_enabled: bool = DEFAULT_KNOWLEDGE_PREFETCH_ENABLED
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
 
 
@@ -186,12 +180,12 @@ def load_config() -> AppConfig:
         fredai_stream=_bool_env("FREDAI_STREAM", True),
         fredai_verify_ssl=_bool_env("FREDAI_VERIFY_SSL", False),
         fredai_timeout_seconds=_float_env("FREDAI_TIMEOUT_SECONDS", 120.0),
-        fredai_oauth_url=_env_first("FREDAI_OAUTH_URL", "OAUTH_URL", default="https://auth.fhlmc.com/as/token.oauth2"),
-        fredai_client_id=_env_first("FREDAI_CLIENT_ID", "CLIENT_ID"),
-        fredai_client_secret=_env_first("FREDAI_CLIENT_SECRET", "CLIENT_SECRET"),
-        fredai_oauth_username=_env_first("FREDAI_OAUTH_USERNAME", "OAUTH_USERNAME"),
-        fredai_oauth_password_b64=_env_first("FREDAI_OAUTH_PASSWORD_B64", "OAUTH_PASSWORD"),
-        fredai_jwt_token=_env_first("FREDAI_JWT_TOKEN", "JWT_TOKEN"),
+        fredai_oauth_url=os.getenv("FREDAI_OAUTH_URL", "https://auth.fhlmc.com/as/token.oauth2").strip(),
+        fredai_client_id=os.getenv("FREDAI_CLIENT_ID", "").strip(),
+        fredai_client_secret=os.getenv("FREDAI_CLIENT_SECRET", "").strip(),
+        fredai_oauth_username=os.getenv("FREDAI_OAUTH_USERNAME", "").strip(),
+        fredai_oauth_password_b64=os.getenv("FREDAI_OAUTH_PASSWORD_B64", "").strip(),
+        fredai_jwt_token=os.getenv("FREDAI_JWT_TOKEN", "").strip(),
         max_agent_iterations=_int_env("WORKSPACE_AGENT_MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),
         session_context_messages=_int_env("WORKSPACE_AGENT_SESSION_CONTEXT_MESSAGES", DEFAULT_SESSION_CONTEXT_MESSAGES),
         scheduler_enabled=_bool_env("WORKSPACE_AGENT_SCHEDULER_ENABLED", True),
@@ -203,4 +197,9 @@ def load_config() -> AppConfig:
         trace_enabled=_bool_env("WORKSPACE_AGENT_TRACE_ENABLED", True),
         trace_full_media=_bool_env("WORKSPACE_AGENT_TRACE_FULL_MEDIA", False),
         delivery_url=os.getenv("WORKSPACE_AGENT_DELIVERY_URL", "").strip(),
+        knowledge_prefetch_enabled=_bool_env(
+            "WORKSPACE_AGENT_KNOWLEDGE_PREFETCH_ENABLED",
+            DEFAULT_KNOWLEDGE_PREFETCH_ENABLED,
+        ),
     )
+

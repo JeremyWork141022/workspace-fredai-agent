@@ -14,6 +14,7 @@ from app.attachment_extractors import extract_attachment
 from app.config import AppConfig, workspace_root
 from app.fredai_auth import FredAIAuthError
 from app.fredai_client import ChatCompletionResult, FredAIClient, FredAIClientError
+from app.knowledge_store import KnowledgeStore
 from app.memory_manager import AgentMemoryManager, render_memory_context_block
 from app.memory_store import MemoryStore
 from app.scheduler import ScheduledJob
@@ -85,9 +86,11 @@ class WorkspaceAgentOrchestrator:
         self.session_store = session_store or SessionStore()
         self.memory_store = memory_store or MemoryStore()
         self.memory_manager = AgentMemoryManager(config, self.memory_store)
+        self.knowledge_store = KnowledgeStore(self.memory_store.db_path)
         self.tool_registry = tool_registry or build_core_tool_registry(
             session_store=self.session_store,
             memory_manager=self.memory_manager,
+            knowledge_store=self.knowledge_store,
             config=config,
         )
         self._client = fredai_client or FredAIClient(config)
@@ -285,6 +288,7 @@ class WorkspaceAgentOrchestrator:
             config=self._config,
             session_store=self.session_store,
             memory_manager=self.memory_manager,
+            knowledge_store=self.knowledge_store,
             summarize_session_search=summarize_session_search,
         )
         instructions = self._build_instructions(workspace_id=workspace_id, user_id=user_id)
@@ -295,7 +299,9 @@ class WorkspaceAgentOrchestrator:
             workspace_id=workspace_id,
             user_id=user_id,
         )
-        working_messages = self._inject_prefetch_context(input_messages, prefetch_context)
+        knowledge_context = self._knowledge_prefetch_context(query_text, workspace_id=workspace_id)
+        combined_prefetch_context = "\n\n".join(part for part in [prefetch_context, knowledge_context] if part.strip())
+        working_messages = self._inject_prefetch_context(input_messages, combined_prefetch_context)
         tool_names: List[str] = []
         progress_messages: List[str] = []
 
@@ -311,7 +317,12 @@ class WorkspaceAgentOrchestrator:
         trace(
             "prefetch",
             "Automatic memory prefetch",
-            {"query_text": query_text, "prefetch_context": prefetch_context, "injected": bool(prefetch_context.strip())},
+            {
+                "query_text": query_text,
+                "prefetch_context": prefetch_context,
+                "knowledge_context": knowledge_context,
+                "injected": bool(combined_prefetch_context.strip()),
+            },
         )
         trace("tool_options", "Tool schemas passed to model", {"tools": tools})
 
@@ -504,11 +515,50 @@ Runtime architecture:
 - Use session_search when older conversation details are needed beyond the recent context window.
 - Use routine_rule for future behavior, standing preferences, scheduled work, reusable workflows, or missing tool requests.
 - Use workspace file tools only for files under WORKSPACE_AGENT_ROOT.
+- Use knowledge_ingest when the user asks to digest, index, add, or remember an attached/source document.
+- Use wiki_search/wiki_read first for conceptual process questions when curated wiki pages exist.
+- Use knowledge_search for broad source-document retrieval and knowledge_grep for exact terms, script names, metrics, field names, or IDs.
+- After knowledge_search or knowledge_grep, call knowledge_read before giving factual answers from source documents.
+- Cite document titles, source paths, sections, and chunk indexes in user-facing answers when source memory is used.
+- Use wiki_write only after reading source evidence or when the user explicitly supplies a correction; keep source_refs/chunk_refs.
+- Use wiki_issue when a user reports wrong, missing, contradictory, or stale wiki/process knowledge.
 - Do not claim storage or scheduling succeeded unless a tool result confirms it.
 - Do not expose tool JSON unless the user asks for implementation-level details.
 """.strip()
         )
         return "\n\n".join(parts)
+
+    def _knowledge_prefetch_context(self, query: str, *, workspace_id: str) -> str:
+        clean_query = " ".join(query.split())[:240]
+        if not self._config.knowledge_prefetch_enabled or len(clean_query) < 3:
+            return ""
+        try:
+            if not self.knowledge_store.has_retrievable_knowledge(workspace_id=workspace_id):
+                return ""
+            wiki_pages = self.knowledge_store.search_wiki(workspace_id=workspace_id, query=clean_query, limit=2)
+            chunk_results = self.knowledge_store.search_chunks(workspace_id=workspace_id, query=clean_query, limit=2)
+        except Exception as exc:
+            logger.debug("Knowledge prefetch skipped: %s", exc)
+            return ""
+        if not wiki_pages and not chunk_results:
+            return ""
+        lines = [
+            "[knowledge_memory]",
+            "Relevant knowledge candidates were found. Use wiki_read or knowledge_read before relying on them for factual answers.",
+        ]
+        if wiki_pages:
+            lines.append("Candidate wiki pages:")
+            for page in wiki_pages:
+                lines.append(f"- [[{page.slug}|{page.title}]] ({page.page_type}): {page.summary[:300]}")
+        if chunk_results:
+            lines.append("Candidate source chunks:")
+            for item in chunk_results:
+                chunk = item.chunk
+                lines.append(
+                    f"- chunk_id={chunk.id} document={chunk.document_title} "
+                    f"section={chunk.section_path or '-'} snippet={item.snippet[:300]}"
+                )
+        return "\n".join(lines)
 
     @staticmethod
     def _inject_prefetch_context(input_messages: List[Dict[str, Any]], prefetch_context: str) -> List[Dict[str, Any]]:
@@ -523,13 +573,23 @@ Runtime architecture:
             content = message.get("content")
             if isinstance(content, str):
                 message["content"] = content + "\n\n" + block
+            elif isinstance(content, list):
+                updated = [dict(item) if isinstance(item, dict) else item for item in content]
+                for part in updated:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        part["text"] = str(part.get("text") or "") + "\n\n" + block
+                        message["content"] = updated
+                        break
+                else:
+                    message["content"] = [{"type": "text", "text": block}, *updated]
             else:
                 message["content"] = json.dumps(content, ensure_ascii=False) + "\n\n" + block
             break
         return working_messages
 
-    def _build_user_content(self, message: str, attachments: List[Dict[str, Any]]) -> str:
+    def _build_user_content(self, message: str, attachments: List[Dict[str, Any]]) -> Any:
         parts = [message.strip() or "[Empty user message]"]
+        media_parts: List[Dict[str, Any]] = []
         root = workspace_root()
         for index, attachment in enumerate(attachments, start=1):
             if not isinstance(attachment, dict):
@@ -537,7 +597,11 @@ Runtime architecture:
                 continue
             extraction = extract_attachment(attachment, index=index, workspace_root=root)
             parts.append(extraction.render(index))
-        return "\n\n".join(parts)
+            media_parts.extend(extraction.media_parts)
+        text = "\n\n".join(parts)
+        if not media_parts:
+            return text
+        return [{"type": "text", "text": text}, *media_parts]
 
     def _chat_payload(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -651,6 +715,14 @@ Runtime architecture:
             "workspace_read_file": "Reading a workspace file.",
             "workspace_list_files": "Listing workspace files.",
             "workspace_find_files": "Finding workspace files.",
+            "knowledge_ingest": "Digesting the source into knowledge memory.",
+            "knowledge_search": "Searching source knowledge.",
+            "knowledge_grep": "Searching exact source terms.",
+            "knowledge_read": "Reading source context.",
+            "wiki_search": "Searching the process wiki.",
+            "wiki_read": "Reading wiki pages.",
+            "wiki_write": "Updating the process wiki.",
+            "wiki_issue": "Logging a wiki knowledge issue.",
         }
         return messages.get(tool_name, "Using a workspace tool.")
 

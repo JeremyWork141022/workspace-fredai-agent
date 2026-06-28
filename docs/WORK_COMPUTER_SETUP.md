@@ -25,19 +25,6 @@ FREDAI_OAUTH_PASSWORD_B64=base64-password
 FREDAI_JWT_TOKEN=your-jwt-token
 ```
 
-The app also accepts the legacy names from the older working FredAI project:
-
-```env
-OAUTH_URL=https://auth.fhlmc.com/as/token.oauth2
-CLIENT_ID=your-client-id
-CLIENT_SECRET=your-client-secret
-OAUTH_USERNAME=your-username
-OAUTH_PASSWORD=base64-password
-JWT_TOKEN=
-```
-
-`JWT_TOKEN` may be blank if the working FredAI project did not need it.
-
 Encode the password:
 
 ```powershell

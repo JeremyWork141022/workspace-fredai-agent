@@ -8,7 +8,7 @@ import io
 import json
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from xml.etree import ElementTree
@@ -19,6 +19,10 @@ MAX_EXTRACTED_CHARS = 60000
 MAX_TABLE_ROWS = 80
 MAX_TABLE_COLS = 30
 MAX_XLSX_SHEETS = 12
+PDF_MAX_PAGES = 6
+PDF_MIN_TEXT_CHARS = 200
+PDF_RENDER_DPI = 180
+PDF_MAX_RENDERED_PAGES = 6
 
 TEXT_EXTENSIONS = {
     ".txt",
@@ -34,24 +38,20 @@ TEXT_EXTENSIONS = {
 TABLE_TEXT_EXTENSIONS = {".csv", ".tsv"}
 STRUCTURED_TEXT_EXTENSIONS = {".json", ".xml", ".html", ".htm", ".rtf"}
 OFFICE_OPEN_XML_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
+PDF_EXTENSIONS = {".pdf"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff"}
 SUPPORTED_ATTACHMENT_EXTENSIONS = sorted(
     TEXT_EXTENSIONS
     | TABLE_TEXT_EXTENSIONS
     | STRUCTURED_TEXT_EXTENSIONS
     | OFFICE_OPEN_XML_EXTENSIONS
+    | PDF_EXTENSIONS
+    | IMAGE_EXTENSIONS
 )
 UNSUPPORTED_ATTACHMENT_EXTENSIONS = {
-    ".pdf": "PDF extraction is intentionally deferred for the next step.",
     ".doc": "Legacy .doc is a binary Word format. Save as .docx for standard-library extraction.",
     ".xls": "Legacy .xls is a binary Excel format. Save as .xlsx or CSV for standard-library extraction.",
     ".ppt": "Legacy .ppt is a binary PowerPoint format. Save as .pptx for standard-library extraction.",
-    ".png": "Image extraction is intentionally deferred for the next step.",
-    ".jpg": "Image extraction is intentionally deferred for the next step.",
-    ".jpeg": "Image extraction is intentionally deferred for the next step.",
-    ".gif": "Image extraction is intentionally deferred for the next step.",
-    ".bmp": "Image extraction is intentionally deferred for the next step.",
-    ".tif": "Image extraction is intentionally deferred for the next step.",
-    ".tiff": "Image extraction is intentionally deferred for the next step.",
 }
 
 
@@ -63,6 +63,7 @@ class AttachmentExtraction:
     source: str
     text: str
     warning: str = ""
+    media_parts: List[Dict[str, Any]] = field(default_factory=list)
 
     def render(self, index: int) -> str:
         header = (
@@ -72,6 +73,8 @@ class AttachmentExtraction:
         )
         if self.warning:
             header += f"\n[Warning: {self.warning}]"
+        if self.media_parts:
+            header += f"\n[Media parts prepared for FredAI vision: {len(self.media_parts)}]"
         return f"{header}\n{self.text}".strip()
 
 
@@ -82,7 +85,9 @@ def attachment_capabilities() -> Dict[str, Any]:
         "accepted_extensions": SUPPORTED_ATTACHMENT_EXTENSIONS,
         "unsupported_extensions": UNSUPPORTED_ATTACHMENT_EXTENSIONS,
         "notes": [
-            "PDF and image extraction are intentionally deferred.",
+            "Images are forwarded to FredAI as OpenAI-compatible image_url content parts.",
+            "PDFs use optional text extraction first and optional PyMuPDF page-image rendering for scanned or image-heavy pages.",
+            "Install pypdf for PDF text extraction and PyMuPDF for PDF page rendering on the work computer.",
             "Legacy .doc and .xls require external parsers; save as .docx, .xlsx, or CSV.",
         ],
     }
@@ -276,6 +281,25 @@ def _extract_from_bytes(
     media_type: str,
     source: str,
 ) -> AttachmentExtraction:
+    normalized_media_type = _normalize_media_type(media_type)
+    if extension in IMAGE_EXTENSIONS or normalized_media_type.startswith("image/"):
+        return _extract_image(
+            raw,
+            name=name,
+            extension=extension,
+            media_type=media_type,
+            source=source,
+        )
+
+    if extension in PDF_EXTENSIONS or normalized_media_type == "application/pdf":
+        return _extract_pdf(
+            raw,
+            name=name,
+            extension=extension or ".pdf",
+            media_type=media_type or "application/pdf",
+            source=source,
+        )
+
     unsupported = UNSUPPORTED_ATTACHMENT_EXTENSIONS.get(extension)
     if unsupported:
         return AttachmentExtraction(
@@ -321,6 +345,181 @@ def _extract_from_bytes(
         text=text,
         warning=" ".join(part for part in [warning, truncate_warning] if part),
     )
+
+
+def _normalize_media_type(media_type: str) -> str:
+    return media_type.split(";", 1)[0].strip().lower()
+
+
+def _image_media_type(extension: str, media_type: str) -> str:
+    normalized = _normalize_media_type(media_type)
+    if normalized.startswith("image/"):
+        return normalized
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".webp": "image/webp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }.get(extension, "image/png")
+
+
+def _extract_image(
+    raw: bytes,
+    *,
+    name: str,
+    extension: str,
+    media_type: str,
+    source: str,
+) -> AttachmentExtraction:
+    clean_media_type = _image_media_type(extension, media_type)
+    data_url = f"data:{clean_media_type};base64,{base64.b64encode(raw).decode('ascii')}"
+    return AttachmentExtraction(
+        name=name,
+        extension=extension,
+        media_type=clean_media_type,
+        source=source,
+        text=(
+            "Image attachment prepared for FredAI vision. The image bytes were passed as an "
+            "OpenAI-compatible image_url content part."
+        ),
+        media_parts=[{"type": "image_url", "image_url": {"url": data_url}}],
+    )
+
+
+def _extract_pdf(
+    raw: bytes,
+    *,
+    name: str,
+    extension: str,
+    media_type: str,
+    source: str,
+) -> AttachmentExtraction:
+    text, text_warning = _extract_pdf_text(raw, max_pages=PDF_MAX_PAGES)
+    has_images, image_warning = _pdf_has_images(raw)
+    should_render = bool(has_images) or len(text.strip()) < PDF_MIN_TEXT_CHARS
+    media_parts: List[Dict[str, Any]] = []
+    render_warning = ""
+
+    if should_render:
+        media_parts, render_warning = _render_pdf_pages(
+            raw,
+            max_pages=PDF_MAX_RENDERED_PAGES,
+            dpi=PDF_RENDER_DPI,
+        )
+
+    lines = [
+        "PDF attachment received.",
+        f"Text chars extracted: {len(text.strip())}",
+        f"PDF has embedded images: {has_images if has_images is not None else 'unknown'}",
+        f"Rendered page images for FredAI vision: {len(media_parts)}",
+        "",
+    ]
+    if text.strip():
+        lines.extend(["Extracted PDF text:", text.strip()])
+    elif not media_parts:
+        lines.append(
+            "No PDF text or page images could be extracted. Install pypdf for text extraction "
+            "and PyMuPDF for image/scanned-page rendering."
+        )
+
+    rendered_text, truncate_warning = _truncate("\n".join(lines), MAX_EXTRACTED_CHARS)
+    warning = " ".join(
+        part for part in [text_warning, image_warning, render_warning, truncate_warning] if part
+    )
+    return AttachmentExtraction(
+        name=name,
+        extension=extension,
+        media_type=media_type,
+        source=source,
+        text=rendered_text,
+        warning=warning,
+        media_parts=media_parts,
+    )
+
+
+def _extract_pdf_text(raw: bytes, *, max_pages: int) -> tuple[str, str]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:
+        return "", f"pypdf is not installed, so direct PDF text extraction was skipped: {exc}"
+
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+    except Exception as exc:
+        return "", f"PDF text parser warning: {exc}"
+
+    if getattr(reader, "is_encrypted", False):
+        try:
+            reader.decrypt("")
+        except Exception:
+            return "", "PDF is encrypted and could not be opened without a password."
+
+    parts: List[str] = []
+    page_count = len(reader.pages)
+    total = min(page_count, max_pages)
+    for index in range(total):
+        try:
+            page_text = (reader.pages[index].extract_text() or "").strip()
+        except Exception as exc:
+            parts.append(f"--- Page {index + 1} ---\n[Text extraction failed: {exc}]")
+            continue
+        if page_text:
+            parts.append(f"--- Page {index + 1} ---\n{page_text}")
+
+    warning = ""
+    if page_count > max_pages:
+        warning = f"Only first {max_pages} PDF pages were parsed for text."
+    return "\n\n".join(parts).strip(), warning
+
+
+def _load_fitz():
+    try:
+        import fitz  # type: ignore
+    except Exception as exc:
+        return None, exc
+    return fitz, None
+
+
+def _pdf_has_images(raw: bytes) -> tuple[Optional[bool], str]:
+    fitz, error = _load_fitz()
+    if fitz is None:
+        return None, f"PyMuPDF is not installed, so PDF image detection was skipped: {error}"
+    try:
+        with fitz.open(stream=raw, filetype="pdf") as doc:
+            for page in doc:
+                if page.get_images(full=True):
+                    return True, ""
+    except Exception as exc:
+        return None, f"PDF image detection warning: {exc}"
+    return False, ""
+
+
+def _render_pdf_pages(raw: bytes, *, max_pages: int, dpi: int) -> tuple[List[Dict[str, Any]], str]:
+    fitz, error = _load_fitz()
+    if fitz is None:
+        return [], f"PyMuPDF is not installed, so PDF page rendering was skipped: {error}"
+
+    parts: List[Dict[str, Any]] = []
+    try:
+        with fitz.open(stream=raw, filetype="pdf") as doc:
+            total = min(len(doc), max_pages)
+            matrix = fitz.Matrix(dpi / 72, dpi / 72)
+            for index in range(total):
+                page = doc.load_page(index)
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                png = pix.tobytes("png")
+                data_url = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+                parts.append({"type": "image_url", "image_url": {"url": data_url}})
+            warning = ""
+            if len(doc) > max_pages:
+                warning = f"Only first {max_pages} PDF pages were rendered for vision."
+            return parts, warning
+    except Exception as exc:
+        return [], f"PDF page rendering warning: {exc}"
 
 
 def _extract_from_text(
