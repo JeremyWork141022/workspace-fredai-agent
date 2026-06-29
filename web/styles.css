@@ -89,12 +89,12 @@ button:disabled {
 .logo-frame {
   display: grid;
   place-items: center;
-  width: min(230px, 100%);
-  aspect-ratio: 3.5 / 1;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
-  overflow: hidden;
+  width: min(236px, 100%);
+  aspect-ratio: 1872 / 666;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .brand-logo {
