@@ -55,6 +55,8 @@ const state = {
   threads: [],
   loadingThreadId: "",
   renamingThreadId: "",
+  renameDraftValue: "",
+  renameSelectPending: false,
   draftThread: null,
   messages: [],
   attachments: [],
@@ -228,6 +230,50 @@ function replaceThreadUrl(sessionId, range = null) {
   window.history.replaceState({}, "", buildThreadUrl(sessionId, range));
 }
 
+async function copyTextToClipboard(text, fallbackPrompt = "Copy this share link:") {
+  const value = String(text || "");
+  if (!value) return false;
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "-9999px";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+
+  try {
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    if (document.execCommand("copy")) return true;
+  } catch (error) {
+    console.warn("Fallback clipboard copy failed.", error);
+  } finally {
+    document.body.removeChild(textarea);
+  }
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await Promise.race([
+        navigator.clipboard.writeText(value),
+        new Promise((_, reject) => {
+          window.setTimeout(() => reject(new Error("Clipboard API timed out")), 750);
+        }),
+      ]);
+      return true;
+    }
+  } catch (error) {
+    console.warn("Clipboard API copy failed.", error);
+  }
+
+  window.prompt(fallbackPrompt, value);
+  return false;
+}
+
 function setTurnMeta(text, tone = "") {
   el.turnMeta.textContent = text || "";
   el.turnMeta.className = tone ? `turn-meta ${tone}` : "turn-meta";
@@ -314,7 +360,7 @@ function renderThreads() {
 
         const input = document.createElement("input");
         input.className = "thread-rename-input";
-        input.value = fallbackTitle(thread);
+        input.value = thread.id === state.renamingThreadId ? state.renameDraftValue : fallbackTitle(thread);
         input.maxLength = 120;
         input.dataset.sessionId = thread.id;
         input.placeholder = "Name this thread";
@@ -337,7 +383,13 @@ function renderThreads() {
         el.threadList.appendChild(item);
         requestAnimationFrame(() => {
           input.focus();
-          input.select();
+          if (state.renameSelectPending) {
+            input.select();
+            state.renameSelectPending = false;
+          } else {
+            const end = input.value.length;
+            input.setSelectionRange(end, end);
+          }
         });
         continue;
       }
@@ -777,7 +829,9 @@ function normalizeThreads(sessions) {
     });
 }
 
-async function refreshThreads() {
+async function refreshThreads(options = {}) {
+  if (state.renamingThreadId && !options.force) return;
+
   if (MOCK_MODE) {
     state.threads = normalizeThreads(loadMockThreads());
     renderThreads();
@@ -832,6 +886,8 @@ async function loadThread(sessionId, options = {}) {
   state.loadingThreadId = sessionId;
   state.draftThread = null;
   state.renamingThreadId = "";
+  state.renameDraftValue = "";
+  state.renameSelectPending = false;
   setTurnMeta("Loading thread", "busy");
   renderThreads();
 
@@ -875,6 +931,8 @@ async function renameThread(sessionId) {
   const thread = state.threads.find((item) => item.id === sessionId);
   if (!thread) return;
   state.renamingThreadId = sessionId;
+  state.renameDraftValue = fallbackTitle(thread);
+  state.renameSelectPending = true;
   renderThreads();
 }
 
@@ -884,9 +942,12 @@ async function saveThreadRename(sessionId) {
     state.draftThread?.id === sessionId
       ? state.draftThread
       : state.threads.find((item) => item.id === sessionId);
-  const title = normalizeTitle(input?.value || "") || NEW_THREAD_TITLE;
+  const draftValue = input ? input.value : state.renameDraftValue;
+  const title = normalizeTitle(draftValue || "") || NEW_THREAD_TITLE;
   if (!thread || !title) {
     state.renamingThreadId = "";
+    state.renameDraftValue = "";
+    state.renameSelectPending = false;
     renderThreads();
     return;
   }
@@ -898,12 +959,16 @@ async function saveThreadRename(sessionId) {
       updated_at: new Date().toISOString(),
     };
     state.renamingThreadId = "";
+    state.renameDraftValue = "";
+    state.renameSelectPending = false;
     render();
     return;
   }
 
   if (title === fallbackTitle(thread)) {
     state.renamingThreadId = "";
+    state.renameDraftValue = "";
+    state.renameSelectPending = false;
     renderThreads();
     return;
   }
@@ -917,6 +982,8 @@ async function saveThreadRename(sessionId) {
       saveMockThreads(threads);
       state.threads = normalizeThreads(threads);
       state.renamingThreadId = "";
+      state.renameDraftValue = "";
+      state.renameSelectPending = false;
       render();
     }
     return;
@@ -925,6 +992,8 @@ async function saveThreadRename(sessionId) {
   try {
     await updateThreadTitleOnServer(sessionId, title);
     state.renamingThreadId = "";
+    state.renameDraftValue = "";
+    state.renameSelectPending = false;
     await refreshThreads();
     render();
   } catch (err) {
@@ -945,6 +1014,8 @@ async function updateThreadTitleOnServer(sessionId, title) {
 
 function cancelThreadRename() {
   state.renamingThreadId = "";
+  state.renameDraftValue = "";
+  state.renameSelectPending = false;
   renderThreads();
 }
 
@@ -1363,8 +1434,8 @@ function removeAttachment(id) {
 async function copyMessage(id) {
   const message = state.messages.find((item) => item.id === id);
   if (!message) return;
-  await navigator.clipboard.writeText(message.text || "");
-  setTurnMeta("Message copied");
+  const copied = await copyTextToClipboard(message.text || "", "Copy this message:");
+  setTurnMeta(copied ? "Message copied" : "Copy box opened");
   setTimeout(() => {
     if (!state.busy) setTurnMeta("");
   }, 1200);
@@ -1396,6 +1467,8 @@ function newSession() {
     isDraft: true,
   };
   state.renamingThreadId = state.draftThread.id;
+  state.renameDraftValue = "";
+  state.renameSelectPending = false;
   state.messages = [];
   state.selectedShareIds.clear();
   state.activeShareRange = null;
@@ -1413,8 +1486,9 @@ function newSession() {
 async function copySession() {
   const value = el.sessionId.value.trim();
   if (!value) return;
-  await navigator.clipboard.writeText(buildThreadUrl(value).toString());
-  setTurnMeta("Thread share link ready to paste");
+  const url = buildThreadUrl(value).toString();
+  const copied = await copyTextToClipboard(url);
+  setTurnMeta(copied ? "Thread share link ready to paste" : "Copy box opened");
   setTimeout(() => {
     if (!state.busy) setTurnMeta("");
   }, 1200);
@@ -1445,15 +1519,16 @@ async function copyShareLink() {
   replaceThreadUrl(state.sessionId, range);
   render({ preserveScroll: true });
   scrollToSharedRange();
-  await navigator.clipboard.writeText(
+  const copied = await copyTextToClipboard(
     [
       "Please look at this CRT Analytics thread excerpt:",
       url,
       "",
       `Thread: ${title}`,
     ].join("\n"),
+    "Copy this selected-chat share link:",
   );
-  setTurnMeta("Selected chat share link ready to paste");
+  setTurnMeta(copied ? "Selected chat share link ready to paste" : "Copy box opened");
   setTimeout(() => {
     if (!state.busy) setTurnMeta("");
   }, 1400);
@@ -1499,6 +1574,14 @@ function handleThreadListKeydown(event) {
   }
 }
 
+function handleThreadListInput(event) {
+  const input = event.target.closest(".thread-rename-input");
+  if (!input) return;
+  if (state.renamingThreadId === input.dataset.sessionId) {
+    state.renameDraftValue = input.value;
+  }
+}
+
 function handleThreadListFocusout(event) {
   const input = event.target.closest(".thread-rename-input");
   if (!input) return;
@@ -1517,6 +1600,24 @@ function handleAttachmentClick(event) {
   removeAttachment(button.dataset.attachmentId);
 }
 
+function handleComposerClick(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button || !el.chatForm.contains(button)) return;
+  const action = button.dataset.action;
+  if (action === "share-thread") {
+    event.preventDefault();
+    copySession();
+  }
+  if (action === "share-selected") {
+    event.preventDefault();
+    copyShareLink();
+  }
+  if (action === "clear-share-selection") {
+    event.preventDefault();
+    clearShareSelection();
+  }
+}
+
 function handleComposerDrag(event) {
   event.preventDefault();
   if (state.busy) return;
@@ -1528,12 +1629,11 @@ function clearComposerDrag() {
 }
 
 el.chatForm.addEventListener("submit", sendMessage);
+el.chatForm.addEventListener("click", handleComposerClick);
 el.stopButton.addEventListener("click", stopRequest);
 el.newSessionButton.addEventListener("click", newSession);
-el.copySessionButton.addEventListener("click", copySession);
-el.copyShareButton.addEventListener("click", copyShareLink);
-el.clearShareButton.addEventListener("click", clearShareSelection);
 el.threadList.addEventListener("click", handleThreadListClick);
+el.threadList.addEventListener("input", handleThreadListInput);
 el.threadList.addEventListener("keydown", handleThreadListKeydown);
 el.threadList.addEventListener("focusout", handleThreadListFocusout);
 el.scrollToBottomButton.addEventListener("click", () => scrollToBottom("smooth"));
@@ -1571,6 +1671,10 @@ el.composerShell.addEventListener("drop", (event) => {
   if (state.busy) return;
   addFiles(Array.from(event.dataTransfer?.files || []));
 });
+
+window.crtShareThread = copySession;
+window.crtShareSelected = copyShareLink;
+window.crtClearShareSelection = clearShareSelection;
 
 async function initializeApp() {
   el.workspaceId.value = SHARED_WORKSPACE_ID;

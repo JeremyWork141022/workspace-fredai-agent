@@ -72,11 +72,33 @@
             </button>
             <textarea id="messageInput" rows="1" placeholder="Ask me about CRT Analytics"></textarea>
             <div class="composer-actions">
-              <button id="copySessionButton" class="composer-link-button" type="button">Share Thread</button>
+              <button
+                id="copySessionButton"
+                class="composer-link-button"
+                type="button"
+                data-action="share-thread"
+                onclick="event.preventDefault(); event.stopPropagation(); window.crtShareThread && window.crtShareThread();"
+              >
+                Share Thread
+              </button>
               <div id="shareBar" class="share-bar hidden" aria-live="polite">
                 <span id="shareCount">0 selected</span>
-                <button id="copyShareButton" type="button">Share Selected</button>
-                <button id="clearShareButton" type="button">Clear</button>
+                <button
+                  id="copyShareButton"
+                  type="button"
+                  data-action="share-selected"
+                  onclick="event.preventDefault(); event.stopPropagation(); window.crtShareSelected && window.crtShareSelected();"
+                >
+                  Share Selected
+                </button>
+                <button
+                  id="clearShareButton"
+                  type="button"
+                  data-action="clear-share-selection"
+                  onclick="event.preventDefault(); event.stopPropagation(); window.crtClearShareSelection && window.crtClearShareSelection();"
+                >
+                  Clear
+                </button>
               </div>
               <button id="stopButton" class="primary-button hidden" type="button">Stop</button>
               <button id="sendButton" class="primary-button" type="submit">Send</button>
@@ -90,6 +112,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260628-rename-draft"></script>
   </body>
 </html>
