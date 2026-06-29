@@ -30,7 +30,6 @@ def _config() -> AppConfig:
         session_context_messages=8,
         scheduler_enabled=False,
         memory_char_limit=2800,
-        user_memory_char_limit=1600,
         memory_prefetch_enabled=True,
         session_search_aux_enabled=False,
         session_search_limit=3,
@@ -109,6 +108,46 @@ class KnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(wiki["pages"][0]["slug"], "eva-overview")
             self.assertEqual(issue.status, "pending")
 
+    def test_document_file_listing_download_and_text_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KnowledgeStore(Path(tmp) / "state.sqlite3")
+            ingest = store.ingest_document(
+                workspace_id="ws",
+                title="EVA Methodology",
+                content="# EVA Methodology\nEVA uses documented CRT Analytics methodology.",
+                process="EVA",
+                doc_type="methodology",
+                source_uri="file://eva-methodology.md",
+                file_name="eva-methodology.md",
+            )
+            document_id = ingest["document"]["id"]
+            saved = store.save_document_file(
+                workspace_id="ws",
+                document_id=document_id,
+                file_name="eva-methodology.md",
+                media_type="text/markdown",
+                content=b"# EVA Methodology\nRaw source file.",
+            )
+            documents = store.list_documents(workspace_id="ws")
+            stored = store.get_document_file(workspace_id="ws", document_id=document_id)
+
+            self.assertEqual(saved["document_id"], document_id)
+            self.assertEqual(documents[0]["id"], document_id)
+            self.assertTrue(documents[0]["has_original_file"])
+            self.assertEqual(stored["content"], b"# EVA Methodology\nRaw source file.")
+
+            ingest_without_file = store.ingest_document(
+                workspace_id="ws",
+                title="Dynamic CRT Cost Notes",
+                content="Dynamic CRT Cost source text only.",
+                process="Dynamic CRT Cost",
+                doc_type="notes",
+                source_uri="manual:dynamic-crt-cost",
+            )
+            export = store.document_text_export(workspace_id="ws", document_id=ingest_without_file["document"]["id"])
+            self.assertIn("Dynamic CRT Cost source text only.", export["content"])
+            self.assertTrue(export["file_name"].endswith(".txt"))
+
 
 class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
     async def test_knowledge_tools_are_callable(self) -> None:
@@ -155,6 +194,57 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(ingest["result"]["ingested"])
             self.assertTrue(search["ok"])
             self.assertGreaterEqual(search["result"]["count"], 1)
+
+    async def test_definition_question_flags_mention_only_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            session_store = SessionStore(db_path)
+            memory_store = MemoryStore(db_path)
+            config = _config()
+            memory_manager = AgentMemoryManager(config, memory_store)
+            knowledge_store = KnowledgeStore(db_path)
+            registry = build_core_tool_registry(
+                session_store=session_store,
+                memory_manager=memory_manager,
+                knowledge_store=knowledge_store,
+                config=config,
+            )
+            session = session_store.get_or_create_session(workspace_id="ws", user_id="u")
+            context = ToolContext(
+                session_id=session.id,
+                workspace_id="ws",
+                user_id="u",
+                config=config,
+                session_store=session_store,
+                memory_manager=memory_manager,
+                knowledge_store=knowledge_store,
+            )
+            await registry.execute(
+                name="knowledge_ingest",
+                arguments={
+                    "title": "EVA User Guide",
+                    "content": "The three required input files are Loan List.xlsx, Collateral Detail.xlsx, and euc_params_setup.xlsx.",
+                    "process": "EVA",
+                    "doc_type": "user_guide",
+                },
+                context=context,
+            )
+            search = await registry.execute(
+                name="knowledge_search",
+                arguments={"query": "What is Loan List.xlsx?", "limit": 3},
+                context=context,
+            )
+            chunk_ids = [item["chunk_id"] for item in search["result"]["results"][:1]]
+            read = await registry.execute(
+                name="knowledge_read",
+                arguments={"chunk_ids": chunk_ids, "user_question": "What is Loan List.xlsx?"},
+                context=context,
+            )
+
+            self.assertTrue(search["ok"])
+            self.assertEqual(search["result"]["knowledge_gap"]["evidence_status"], "definition_not_found")
+            self.assertTrue(read["ok"])
+            self.assertEqual(read["result"]["knowledge_gap"]["evidence_status"], "definition_not_found")
 
 
 if __name__ == "__main__":

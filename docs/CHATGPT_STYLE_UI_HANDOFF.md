@@ -2,7 +2,7 @@
 
 Date: 2026-06-27
 
-This handoff describes the new package-free ChatGPT-style UI built for the Workspace FredAI Agent. It intentionally does not import `assistant-ui`, React, Radix, lucide, Tailwind, AI SDK, or any other frontend package. It uses assistant-ui's ChatGPT example as a design reference only.
+This handoff describes the new package-free ChatGPT-style UI built for the CRT Analytics Agent. It intentionally does not import `assistant-ui`, React, Radix, lucide, Tailwind, AI SDK, or any other frontend package. It uses assistant-ui's ChatGPT example as a design reference only.
 
 ## Files Changed
 

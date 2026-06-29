@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -15,6 +16,117 @@ from app.session_store import SessionStore
 
 ToolHandler = Callable[["ToolContext", Dict[str, Any]], Dict[str, Any] | Awaitable[Dict[str, Any]]]
 SessionSearchSummarizer = Callable[[str, List[Dict[str, Any]]], Awaitable[List[Dict[str, Any]]]]
+
+
+DEFINITION_PATTERNS = [
+    re.compile(r"\bwhat\s+is\s+(?:a|an|the)?\s*[\"'`]?([^\"'`?]+?)[\"'`]?\s*\??$", re.IGNORECASE),
+    re.compile(r"\bwhat\s+does\s+[\"'`]?([^\"'`?]+?)[\"'`]?\s+mean\b", re.IGNORECASE),
+    re.compile(r"\bdefine\s+[\"'`]?([^\"'`?]+?)[\"'`]?", re.IGNORECASE),
+    re.compile(r"\bexplain\s+[\"'`]?([^\"'`?]+?)[\"'`]?", re.IGNORECASE),
+]
+FILE_EXTENSION_TOKENS = {"csv", "doc", "docx", "pdf", "txt", "xls", "xlsx", "xslx", "ppt", "pptx"}
+DEFINITION_CUES = [
+    "refers to",
+    "means",
+    "defined as",
+    "definition",
+    "contains",
+    "consists of",
+    "comprises",
+    "represents",
+    "identifies",
+    "stores",
+    "maps",
+    "records",
+    "loan id",
+    "loan number",
+]
+MENTION_ONLY_CUES = [
+    "one of",
+    "required input",
+    "input file",
+    "input files",
+    "prepare",
+    "upload",
+    "select",
+    "provided",
+    "listed",
+    "needed",
+    "include the following",
+    "three input",
+]
+
+
+def _definition_subject(query: str) -> str:
+    clean = " ".join(str(query or "").split()).strip()
+    for pattern in DEFINITION_PATTERNS:
+        match = pattern.search(clean)
+        if not match:
+            continue
+        subject = match.group(1).strip(" .,:;!?\"'`")
+        subject = re.sub(r"\s+\b(in|for|within|under)\b\s+.*$", "", subject, flags=re.IGNORECASE).strip()
+        return subject[:120]
+    return ""
+
+
+def _subject_tokens(subject: str) -> List[str]:
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]+", subject or "") if len(token) >= 2]
+    core = [token for token in tokens if token not in FILE_EXTENSION_TOKENS]
+    return core or tokens[:2]
+
+
+def _candidate_sentences(subject: str, text: str, *, limit: int = 5) -> List[str]:
+    tokens = _subject_tokens(subject)
+    if not tokens:
+        return []
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", text or "")
+    matches: List[str] = []
+    for sentence in sentences:
+        clean = " ".join(sentence.split()).strip()
+        if not clean:
+            continue
+        lowered = clean.lower()
+        if all(token in lowered for token in tokens):
+            matches.append(clean[:500])
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def _knowledge_gap_hint(user_question: str, evidence_texts: List[str]) -> Dict[str, Any]:
+    subject = _definition_subject(user_question)
+    if not subject:
+        return {}
+    joined = "\n".join(text for text in evidence_texts if text).strip()
+    mentions = _candidate_sentences(subject, joined)
+    if not mentions:
+        return {
+            "definition_question": True,
+            "subject": subject,
+            "evidence_status": "term_not_found",
+            "guidance": (
+                "The retrieved source context does not define or clearly mention this term. "
+                "Say the indexed documentation does not define it, avoid circular answers, and suggest a wiki_issue/glossary correction."
+            ),
+        }
+    mention_text = "\n".join(mentions).lower()
+    has_definition_cue = any(cue in mention_text for cue in DEFINITION_CUES)
+    has_weak_cue = any(cue in mention_text for cue in MENTION_ONLY_CUES)
+    status = "definition_candidate_found" if has_definition_cue else "definition_not_found"
+    if has_definition_cue and has_weak_cue:
+        status = "definition_candidate_found"
+    return {
+        "definition_question": True,
+        "subject": subject,
+        "evidence_status": status,
+        "mention_only_cues_found": bool(has_weak_cue and not has_definition_cue),
+        "mention_snippets": mentions[:3],
+        "guidance": (
+            "If evidence_status is definition_not_found, do not restate that the term is merely an input/listed item. "
+            "Say the indexed source mentions the term but does not define it; provide only labeled inference if helpful; "
+            "create or suggest wiki_issue/wiki_write for a glossary correction."
+        ),
+    }
 
 
 @dataclass
@@ -208,7 +320,7 @@ def build_core_tool_registry(
 
         if rule_type == "curated_memory":
             content = str(args.get("memory_content") or args.get("action") or args.get("source_request") or "").strip()
-            target = str(args.get("memory_target") or "user").strip()
+            target = str(args.get("memory_target") or "memory").strip()
             result = context.memory_manager.handle_tool_call(
                 "memory",
                 {"action": "add", "target": target, "content": content},
@@ -376,6 +488,7 @@ def build_core_tool_registry(
             {"chunk_id": item.chunk.id, "document_id": item.chunk.document_id, "score": item.score}
             for item in results
         ]
+        gap_hint = _knowledge_gap_hint(query, [item.chunk.content for item in results[:5]])
         context.knowledge_store.record_retrieval_event(
             workspace_id=context.workspace_id,
             session_id=context.session_id,
@@ -383,13 +496,18 @@ def build_core_tool_registry(
             query=query,
             tool_name="knowledge_search",
             result_refs=refs,
-            metadata={"limit": limit},
+            metadata={"limit": limit, "knowledge_gap": gap_hint},
         )
         return {
             "query": query,
             "count": len(results),
             "results": [context.knowledge_store.search_result_to_dict(item) for item in results],
-            "mandatory_next_step": "Call knowledge_read with the relevant chunk_ids before answering factual EVA/Macs/process questions.",
+            "knowledge_gap": gap_hint,
+            "recommended_read_args": {"chunk_ids": [item.chunk.id for item in results[:5]], "user_question": query},
+            "mandatory_next_step": (
+                "Call knowledge_read with the relevant chunk_ids and user_question before answering factual EVA/Macs/process questions. "
+                "For definition questions, follow knowledge_gap guidance if retrieved chunks only mention/list the term."
+            ),
         }
 
     async def knowledge_grep(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -426,6 +544,7 @@ def build_core_tool_registry(
     async def knowledge_read(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
         chunk_ids = args.get("chunk_ids")
         indexes = args.get("chunk_indexes")
+        user_question = str(args.get("user_question") or "").strip()
         result = context.knowledge_store.read_context(
             workspace_id=context.workspace_id,
             chunk_ids=chunk_ids if isinstance(chunk_ids, list) else [],
@@ -436,14 +555,30 @@ def build_core_tool_registry(
             max_chars=int(args.get("max_chars") or 60000),
         )
         refs = [{"chunk_id": chunk.get("chunk_id"), "document_id": chunk.get("document_id")} for chunk in result.get("chunks", [])]
+        gap_hint = _knowledge_gap_hint(
+            user_question,
+            [
+                "\n".join(
+                    [
+                        str(chunk.get("document_title") or ""),
+                        str(chunk.get("section_path") or ""),
+                        str(chunk.get("context_header") or ""),
+                        str(chunk.get("content") or ""),
+                    ]
+                )
+                for chunk in result.get("chunks", [])
+            ],
+        )
+        if gap_hint:
+            result["knowledge_gap"] = gap_hint
         context.knowledge_store.record_retrieval_event(
             workspace_id=context.workspace_id,
             session_id=context.session_id,
             user_id=context.user_id,
-            query=str(args.get("document_id") or ",".join(chunk_ids if isinstance(chunk_ids, list) else [])),
+            query=user_question or str(args.get("document_id") or ",".join(chunk_ids if isinstance(chunk_ids, list) else [])),
             tool_name="knowledge_read",
             result_refs=refs,
-            metadata={"count": result.get("count")},
+            metadata={"count": result.get("count"), "knowledge_gap": gap_hint},
         )
         return result
 
@@ -599,7 +734,7 @@ def build_core_tool_registry(
                     "daily_time": {"type": "string", "description": "Local 24-hour HH:MM."},
                     "job_prompt": {"type": "string"},
                     "deliver_result": {"type": "boolean"},
-                    "memory_target": {"type": "string", "enum": ["memory", "user"]},
+                    "memory_target": {"type": "string", "enum": ["memory"]},
                     "memory_key": {"type": "string"},
                     "memory_content": {"type": "string"},
                     "source_request": {"type": "string"},
@@ -702,7 +837,8 @@ def build_core_tool_registry(
             description=(
                 "Search source-document chunks for semantic or broad factual evidence. Use for EVA/Macs/process questions "
                 "when the answer should be grounded in ingested documents. This returns candidate snippets only; call "
-                "knowledge_read on the selected chunk_ids before answering."
+                "knowledge_read on the selected chunk_ids before answering. For definition questions, inspect knowledge_gap "
+                "and avoid circular answers when sources only mention/list the term."
             ),
             parameters={
                 "type": "object",
@@ -751,7 +887,8 @@ def build_core_tool_registry(
             description=(
                 "Deep-read full source context after knowledge_search or knowledge_grep. Fetches selected chunks plus optional "
                 "parent and neighboring chunks so answers can cite the document, section, source, and chunk. Use this before "
-                "final factual answers about EVA/Macs/process documentation."
+                "final factual answers about EVA/Macs/process documentation. Pass user_question for definition questions so "
+                "the lightweight knowledge-gap detector can warn when source evidence only mentions the term."
             ),
             parameters={
                 "type": "object",
@@ -762,6 +899,10 @@ def build_core_tool_registry(
                     "include_parent": {"type": "boolean", "default": True},
                     "include_neighbors": {"type": "boolean", "default": True},
                     "max_chars": {"type": "integer", "minimum": 1000, "maximum": 120000},
+                    "user_question": {
+                        "type": "string",
+                        "description": "Original user question. Use for answerability checks, especially what-is/define/explain questions.",
+                    },
                 },
                 "required": [],
                 "additionalProperties": False,

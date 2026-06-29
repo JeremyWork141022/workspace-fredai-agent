@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -200,6 +201,25 @@ class KnowledgeStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_kdocs_process ON knowledge_documents(workspace_id, process, doc_type)")
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS knowledge_files (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    file_name TEXT NOT NULL DEFAULT '',
+                    media_type TEXT NOT NULL DEFAULT '',
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    content_base64 TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(document_id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_kfiles_workspace ON knowledge_files(workspace_id, updated_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_kfiles_document ON knowledge_files(document_id)")
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS knowledge_chunks (
                     id TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL,
@@ -315,6 +335,7 @@ class KnowledgeStore:
             params: List[Any] = [workspace_id] if workspace_id else []
             kb_count = conn.execute(f"SELECT COUNT(*) FROM knowledge_bases {where}", params).fetchone()[0]
             doc_count = conn.execute(f"SELECT COUNT(*) FROM knowledge_documents {where}", params).fetchone()[0]
+            file_count = conn.execute(f"SELECT COUNT(*) FROM knowledge_files {where}", params).fetchone()[0]
             chunk_count = conn.execute(f"SELECT COUNT(*) FROM knowledge_chunks {where}", params).fetchone()[0]
             wiki_count = conn.execute(f"SELECT COUNT(*) FROM wiki_pages {where}", params).fetchone()[0]
             issue_count = conn.execute(f"SELECT COUNT(*) FROM wiki_issues {where}", params).fetchone()[0]
@@ -322,6 +343,7 @@ class KnowledgeStore:
             "db_path": str(self._db_path),
             "knowledge_bases": int(kb_count),
             "documents": int(doc_count),
+            "files": int(file_count),
             "chunks": int(chunk_count),
             "wiki_pages": int(wiki_count),
             "wiki_issues": int(issue_count),
@@ -580,6 +602,203 @@ class KnowledgeStore:
                 "Use wiki_write to create or update curated wiki pages with chunk_refs from this document."
             ),
         }
+
+    @staticmethod
+    def hash_bytes(content: bytes) -> str:
+        return hashlib.sha256(content).hexdigest()
+
+    def get_document(self, *, workspace_id: str, document_id: str) -> Optional[KnowledgeDocumentRecord]:
+        workspace_id = workspace_id.strip() or "default"
+        document_id = document_id.strip()
+        if not document_id:
+            return None
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM knowledge_documents WHERE workspace_id = ? AND id = ? AND status != 'deleted'",
+                (workspace_id, document_id),
+            ).fetchone()
+        return self._row_to_document(row) if row else None
+
+    def list_documents(
+        self,
+        *,
+        workspace_id: str,
+        knowledge_base: str = "",
+        process: str = "",
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        workspace_id = workspace_id.strip() or "default"
+        where = ["d.workspace_id = ?", "d.status != 'deleted'"]
+        params: List[Any] = [workspace_id]
+        if knowledge_base.strip():
+            where.append("kb.name = ?")
+            params.append(knowledge_base.strip())
+        if process.strip():
+            where.append("d.process = ?")
+            params.append(process.strip())
+        params.append(max(1, min(limit, 500)))
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    d.*,
+                    kb.name AS knowledge_base_name,
+                    COUNT(CASE WHEN c.chunk_type = 'text' THEN 1 END) AS child_chunk_count,
+                    COUNT(c.id) AS total_chunk_count,
+                    f.file_name AS stored_file_name,
+                    f.media_type AS stored_media_type,
+                    f.size_bytes AS stored_size_bytes,
+                    f.updated_at AS file_updated_at
+                FROM knowledge_documents d
+                JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
+                LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+                LEFT JOIN knowledge_files f ON f.document_id = d.id
+                WHERE {' AND '.join(where)}
+                GROUP BY d.id
+                ORDER BY d.updated_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        documents: List[Dict[str, Any]] = []
+        for row in rows:
+            document = self.document_to_dict(self._row_to_document(row))
+            has_file = row["stored_file_name"] is not None
+            document.update(
+                {
+                    "workspace_id": str(row["workspace_id"]),
+                    "knowledge_base": str(row["knowledge_base_name"] or ""),
+                    "chunk_count": int(row["child_chunk_count"] or 0),
+                    "total_chunk_count": int(row["total_chunk_count"] or 0),
+                    "metadata": self._json(row, "metadata_json", {}),
+                    "created_at": str(row["created_at"]),
+                    "has_original_file": bool(has_file),
+                    "stored_file_name": str(row["stored_file_name"] or ""),
+                    "stored_media_type": str(row["stored_media_type"] or ""),
+                    "stored_size_bytes": int(row["stored_size_bytes"] or 0),
+                    "file_updated_at": str(row["file_updated_at"] or ""),
+                    "download_url": f"/agent/knowledge/documents/{document['id']}/download?workspace_id={workspace_id}",
+                }
+            )
+            documents.append(document)
+        return documents
+
+    def save_document_file(
+        self,
+        *,
+        workspace_id: str,
+        document_id: str,
+        file_name: str,
+        media_type: str,
+        content: bytes,
+    ) -> Dict[str, Any]:
+        workspace_id = workspace_id.strip() or "default"
+        document_id = document_id.strip()
+        if not document_id:
+            raise ValueError("document_id is required")
+        now = utc_now()
+        content_hash = self.hash_bytes(content)
+        encoded = base64.b64encode(content).decode("ascii")
+        with self._connection() as conn:
+            existing = conn.execute("SELECT id FROM knowledge_files WHERE document_id = ?", (document_id,)).fetchone()
+            file_id = str(existing["id"]) if existing else f"kfile_{uuid.uuid4().hex}"
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE knowledge_files
+                    SET workspace_id = ?, file_name = ?, media_type = ?, size_bytes = ?,
+                        content_base64 = ?, content_hash = ?, updated_at = ?
+                    WHERE document_id = ?
+                    """,
+                    (workspace_id, file_name.strip(), media_type.strip(), len(content), encoded, content_hash, now, document_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO knowledge_files
+                        (id, workspace_id, document_id, file_name, media_type, size_bytes,
+                         content_base64, content_hash, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        workspace_id,
+                        document_id,
+                        file_name.strip(),
+                        media_type.strip(),
+                        len(content),
+                        encoded,
+                        content_hash,
+                        now,
+                        now,
+                    ),
+                )
+        return {
+            "id": file_id,
+            "document_id": document_id,
+            "file_name": file_name.strip(),
+            "media_type": media_type.strip(),
+            "size_bytes": len(content),
+            "content_hash": content_hash,
+            "updated_at": now,
+        }
+
+    def get_document_file(self, *, workspace_id: str, document_id: str) -> Optional[Dict[str, Any]]:
+        workspace_id = workspace_id.strip() or "default"
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM knowledge_files
+                WHERE workspace_id = ? AND document_id = ?
+                """,
+                (workspace_id, document_id),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "document_id": str(row["document_id"]),
+            "file_name": str(row["file_name"] or "knowledge-document.bin"),
+            "media_type": str(row["media_type"] or "application/octet-stream"),
+            "size_bytes": int(row["size_bytes"] or 0),
+            "content_hash": str(row["content_hash"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+            "content": base64.b64decode(str(row["content_base64"] or "")),
+        }
+
+    def document_text_export(self, *, workspace_id: str, document_id: str) -> Optional[Dict[str, Any]]:
+        document = self.get_document(workspace_id=workspace_id, document_id=document_id)
+        if not document:
+            return None
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT chunk_index, context_header, content
+                FROM knowledge_chunks
+                WHERE workspace_id = ? AND document_id = ? AND chunk_type = 'text'
+                ORDER BY chunk_index
+                """,
+                (workspace_id.strip() or "default", document_id),
+            ).fetchall()
+        lines = [
+            f"# {document.title}",
+            "",
+            f"Document ID: {document.id}",
+            f"Source URI: {document.source_uri}",
+            f"Process: {document.process}",
+            f"Doc type: {document.doc_type}",
+            "",
+        ]
+        for row in rows:
+            header = str(row["context_header"] or "").strip()
+            if header:
+                lines.append(f"## {header}")
+            lines.append(str(row["content"] or "").strip())
+            lines.append("")
+        stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", document.file_name or document.title).strip("_") or document.id
+        if not stem.lower().endswith(".txt"):
+            stem = f"{stem}.txt"
+        return {"file_name": stem, "content": "\n".join(lines).strip() + "\n"}
 
     def search_chunks(
         self,

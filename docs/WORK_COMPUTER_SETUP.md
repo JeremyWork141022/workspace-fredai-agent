@@ -63,6 +63,6 @@ Each user should have a stable `user_id`. Use the same `workspace_id` for a shar
 
 - `.env` is local machine configuration and should contain work-only FredAI credentials.
 - `.runtime/state.sqlite3` stores sessions, messages, traces, routine rules, jobs, and workspace notes.
-- `.runtime/memories/MEMORY.md` and `.runtime/memories/USER.md` store curated memory.
+- `.runtime/memories/MEMORY.md` stores curated always-on memory. Source documents belong in the knowledge base; corrections and clarifications belong in wiki pages/issues.
 - `GET /agent/traces/{request_id}` opens request traces from the UI trace link.
 - Set `FREDAI_STREAM=false` if the FredAI gateway does not stream tool-call deltas correctly.

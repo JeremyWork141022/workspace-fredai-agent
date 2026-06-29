@@ -1,4 +1,4 @@
-# Workspace FredAI Agent - LLM Handoff
+# CRT Analytics Agent - LLM Handoff
 
 This document is the detailed handoff for the next LLM session on Jeremy's work computer. It explains what the project is, why it exists, how the files connect, how the runtime works, how to run it, and where to continue safely.
 
@@ -254,8 +254,7 @@ Current important repository structure:
     |-- cache
     |   `-- .keep
     `-- memories
-        |-- MEMORY.md
-        `-- USER.md
+        `-- MEMORY.md
 ```
 
 `.runtime` is runtime state. This repo currently does not use `.gitignore` because the user explicitly requested all files be uploaded. Still, on the work computer, treat `.env` and production runtime DB contents as sensitive.
@@ -641,12 +640,9 @@ Curated memory files:
 
 ```text
 .runtime/memories/MEMORY.md
-.runtime/memories/USER.md
 ```
 
-`MEMORY.md` is for stable agent/project operating facts.
-
-`USER.md` is for stable user profile facts and preferences.
+`MEMORY.md` is the only curated always-on Markdown memory. It is for stable agent/project operating facts, retrieval discipline, and correction policy.
 
 Large facts, raw logs, old conversations, document extracts, and project notes should go to SQLite workspace notes or session history, not curated memory.
 
@@ -886,7 +882,7 @@ Stored user content may include attachments. Text attachments are inlined up to 
 The orchestrator builds:
 
 - system prompt from `config.system_prompt`
-- curated memory from `MEMORY.md` and `USER.md`
+- curated memory from `MEMORY.md`
 - runtime architecture instructions
 - recent messages from SQLite
 - current user message
@@ -1026,7 +1022,6 @@ Default runtime state:
 ```text
 .runtime/state.sqlite3
 .runtime/memories/MEMORY.md
-.runtime/memories/USER.md
 .runtime/cache/
 ```
 
@@ -1043,6 +1038,7 @@ memories
 memory_turns
 routine_rules
 workspace_notes
+knowledge_files
 cron_jobs
 cron_runs
 ```
@@ -1073,12 +1069,11 @@ Always-on Markdown memory:
 
 ```text
 .runtime/memories/MEMORY.md
-.runtime/memories/USER.md
 ```
 
 Updated by the `memory` tool.
 
-Use for compact stable facts only.
+Use for compact stable operating facts only. Source documents belong in the knowledge base; interpretation fixes belong in wiki pages/issues.
 
 ### 10.3 SQLite Memory and Turns
 
@@ -1110,7 +1105,7 @@ Tools:
 
 Purpose:
 
-Save durable curated memory in `MEMORY.md` or `USER.md`.
+Save durable curated memory in `MEMORY.md`.
 
 Actions:
 
@@ -1121,7 +1116,6 @@ Actions:
 Targets:
 
 - `memory`
-- `user`
 
 Safety:
 
@@ -1725,4 +1719,3 @@ http://127.0.0.1:8000/
 ```
 
 If anything fails, use the decision tree above before changing code.
-

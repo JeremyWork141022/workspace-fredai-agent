@@ -12,15 +12,16 @@ DEFAULT_MODEL = "azure-openai-chat"
 DEFAULT_MAX_AGENT_ITERATIONS = 4
 DEFAULT_SESSION_CONTEXT_MESSAGES = 16
 DEFAULT_MEMORY_CHAR_LIMIT = 2800
-DEFAULT_USER_MEMORY_CHAR_LIMIT = 1600
 DEFAULT_SESSION_SEARCH_LIMIT = 3
 DEFAULT_KNOWLEDGE_PREFETCH_ENABLED = True
 
-DEFAULT_SYSTEM_PROMPT = """You are the Workspace FredAI Agent.
+DEFAULT_SYSTEM_PROMPT = """You are the CRT Analytics Agent.
 
-You receive requests through an internal workspace API. Your job is to answer
-clearly, use available tools when useful, preserve durable memory carefully,
-and help the workspace user continue work across sessions.
+You receive requests through an internal workspace API. Your job is to help users
+understand, validate, and eventually execute CRT Analytics workflows and PRM,
+including EVA, Dynamic CRT Cost, and Spot CRT Cost. Answer clearly, use available
+tools when useful, preserve durable memory carefully, and help users continue work
+across sessions.
 
 Boundaries:
 - Use FredAI as the only model API boundary.
@@ -160,7 +161,6 @@ class AppConfig:
     session_context_messages: int
     scheduler_enabled: bool
     memory_char_limit: int
-    user_memory_char_limit: int
     memory_prefetch_enabled: bool
     session_search_aux_enabled: bool
     session_search_limit: int
@@ -190,7 +190,6 @@ def load_config() -> AppConfig:
         session_context_messages=_int_env("WORKSPACE_AGENT_SESSION_CONTEXT_MESSAGES", DEFAULT_SESSION_CONTEXT_MESSAGES),
         scheduler_enabled=_bool_env("WORKSPACE_AGENT_SCHEDULER_ENABLED", True),
         memory_char_limit=_int_env("WORKSPACE_AGENT_MEMORY_CHAR_LIMIT", DEFAULT_MEMORY_CHAR_LIMIT),
-        user_memory_char_limit=_int_env("WORKSPACE_AGENT_USER_MEMORY_CHAR_LIMIT", DEFAULT_USER_MEMORY_CHAR_LIMIT),
         memory_prefetch_enabled=_bool_env("WORKSPACE_AGENT_MEMORY_PREFETCH_ENABLED", True),
         session_search_aux_enabled=_bool_env("WORKSPACE_AGENT_SESSION_SEARCH_AUX_ENABLED", True),
         session_search_limit=_int_env("WORKSPACE_AGENT_SESSION_SEARCH_LIMIT", DEFAULT_SESSION_SEARCH_LIMIT),

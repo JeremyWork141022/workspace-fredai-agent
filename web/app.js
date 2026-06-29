@@ -62,6 +62,18 @@ const state = {
   attachments: [],
   selectedShareIds: new Set(),
   activeShareRange: null,
+  knowledge: {
+    open: false,
+    loading: false,
+    uploading: false,
+    replaceDocumentId: "",
+    documents: [],
+    wikiPages: [],
+    wikiIssues: [],
+    tagFilter: "",
+    status: "",
+    tone: "",
+  },
   attachmentConfig: {
     inlineBase64: false,
     maxInlineBytes: 0,
@@ -94,6 +106,20 @@ const el = {
   stopButton: document.querySelector("#stopButton"),
   turnMeta: document.querySelector("#turnMeta"),
   newSessionButton: document.querySelector("#newSessionButton"),
+  knowledgeButton: document.querySelector("#knowledgeButton"),
+  knowledgePanel: document.querySelector("#knowledgePanel"),
+  knowledgeCloseButton: document.querySelector("#knowledgeCloseButton"),
+  knowledgeRefreshButton: document.querySelector("#knowledgeRefreshButton"),
+  knowledgeForm: document.querySelector("#knowledgeForm"),
+  knowledgeFormTitle: document.querySelector("#knowledgeFormTitle"),
+  knowledgeCancelReplaceButton: document.querySelector("#knowledgeCancelReplaceButton"),
+  knowledgeFileInput: document.querySelector("#knowledgeFileInput"),
+  knowledgeUploadButton: document.querySelector("#knowledgeUploadButton"),
+  knowledgeStatus: document.querySelector("#knowledgeStatus"),
+  knowledgeTagFilters: document.querySelector("#knowledgeTagFilters"),
+  knowledgeDocs: document.querySelector("#knowledgeDocs"),
+  knowledgeWiki: document.querySelector("#knowledgeWiki"),
+  knowledgeIssues: document.querySelector("#knowledgeIssues"),
   copySessionButton: document.querySelector("#copySessionButton"),
 };
 
@@ -313,12 +339,61 @@ function updateComposerControls() {
   el.sendButton.classList.toggle("hidden", state.busy);
 }
 
+function isKnowledgeIntent(text) {
+  const value = String(text || "").toLowerCase();
+  if (!value.trim()) return false;
+  const patterns = [
+    /\bshow\b.*\bknowledge\s*base\b/,
+    /\bopen\b.*\bknowledge\s*base\b/,
+    /\bknowledge\s*base\b.*\b(include|contain|have|list|show|open|document|file|source|wiki)\b/,
+    /\bwhat\b.*\b(indexed|uploaded|ingested|stored)\b/,
+    /\b(documentation|document|source)\s*(folder|library|inventory)\b/,
+    /\bwiki\s*(pages?|issues?|corrections?)\b/,
+  ];
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function buildThinkingSteps(userMessage) {
+  const steps = ["Reading this thread and curated memory."];
+  if (userMessage.attachments?.length) {
+    steps.push("Preparing attached file context.");
+  }
+  if (isKnowledgeIntent(userMessage.text) || /\b(eva|macs|crt|prm|methodology|user guide|workflow)\b/i.test(userMessage.text || "")) {
+    steps.push("Checking whether knowledge base or wiki tools are needed.");
+  }
+  steps.push("Waiting for FredAI to choose tools or answer.");
+  steps.push("Tool results will appear in progress details when the response returns.");
+  return steps;
+}
+
+function startThinkingProgress(assistantMessage, userMessage) {
+  const steps = buildThinkingSteps(userMessage);
+  assistantMessage.meta = assistantMessage.meta || {};
+  assistantMessage.meta.progressMessages = [steps[0]];
+  let index = 1;
+  return window.setInterval(() => {
+    if (!state.busy || assistantMessage.status !== "running") return;
+    if (index < steps.length) {
+      assistantMessage.meta.progressMessages = [...(assistantMessage.meta.progressMessages || []), steps[index]];
+      index += 1;
+    } else {
+      const elapsed = Math.max(1, Math.round((Date.now() - new Date(assistantMessage.createdAt).getTime()) / 1000));
+      assistantMessage.meta.progressMessages = [
+        ...steps.slice(0, -1),
+        `Still thinking (${elapsed}s). FredAI may be reading sources or running tools.`,
+      ];
+    }
+    render({ preserveScroll: true });
+  }, 2200);
+}
+
 function render(options = {}) {
   const shouldPin = !options.preserveScroll && (options.forceScroll || isNearBottom());
   renderThreads();
   renderMessages();
   renderAttachments();
   renderShareBar();
+  renderKnowledgePanel();
   updateComposerControls();
   if (shouldPin) requestAnimationFrame(() => scrollToBottom(options.smooth ? "smooth" : "auto"));
   updateScrollButton();
@@ -432,6 +507,322 @@ function renderShareBar() {
   el.copyShareButton.disabled = count === 0 || !state.sessionId;
 }
 
+function setKnowledgeStatus(text, tone = "") {
+  state.knowledge.status = text || "";
+  state.knowledge.tone = tone || "";
+  renderKnowledgePanel();
+}
+
+function renderKnowledgePanel() {
+  el.knowledgePanel.classList.toggle("hidden", !state.knowledge.open);
+  el.knowledgePanel.classList.toggle("loading", state.knowledge.loading || state.knowledge.uploading);
+  el.knowledgeFormTitle.textContent = state.knowledge.replaceDocumentId
+    ? "Replace Source Document"
+    : "Upload Source Document";
+  el.knowledgeUploadButton.textContent = state.knowledge.replaceDocumentId ? "Replace Document" : "Upload Document";
+  el.knowledgeUploadButton.disabled = state.knowledge.uploading;
+  el.knowledgeCancelReplaceButton.classList.toggle("hidden", !state.knowledge.replaceDocumentId);
+  el.knowledgeStatus.textContent = state.knowledge.status || "";
+  el.knowledgeStatus.className = state.knowledge.tone ? state.knowledge.tone : "";
+  renderKnowledgeTagFilters();
+  renderKnowledgeDocuments();
+  renderKnowledgeWiki();
+  renderKnowledgeIssues();
+}
+
+function knowledgeDocumentTags(doc) {
+  const metadataTags = doc.metadata?.auto_metadata?.tags;
+  const tags = [
+    ...(Array.isArray(doc.tags) ? doc.tags : []),
+    ...(Array.isArray(metadataTags) ? metadataTags : []),
+    doc.process,
+    doc.doc_type,
+    doc.metadata?.auto_metadata?.version ? `version:${doc.metadata.auto_metadata.version}` : "",
+  ];
+  return Array.from(new Set(tags.map((tag) => String(tag || "").trim()).filter(Boolean)));
+}
+
+function renderKnowledgeTagFilters() {
+  el.knowledgeTagFilters.innerHTML = "";
+  const tags = Array.from(new Set(state.knowledge.documents.flatMap(knowledgeDocumentTags))).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const all = document.createElement("button");
+  all.type = "button";
+  all.dataset.action = "filter-knowledge-tag";
+  all.dataset.tag = "";
+  all.className = state.knowledge.tagFilter ? "" : "active";
+  all.textContent = "All";
+  el.knowledgeTagFilters.appendChild(all);
+  for (const tag of tags) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = "filter-knowledge-tag";
+    button.dataset.tag = tag;
+    button.className = state.knowledge.tagFilter === tag ? "active" : "";
+    button.textContent = tag;
+    el.knowledgeTagFilters.appendChild(button);
+  }
+}
+
+function renderKnowledgeDocuments() {
+  el.knowledgeDocs.innerHTML = "";
+  if (state.knowledge.loading) {
+    el.knowledgeDocs.appendChild(knowledgeEmpty("Loading knowledge base..."));
+    return;
+  }
+  const documents = state.knowledge.tagFilter
+    ? state.knowledge.documents.filter((doc) => knowledgeDocumentTags(doc).includes(state.knowledge.tagFilter))
+    : state.knowledge.documents;
+  if (!documents.length) {
+    el.knowledgeDocs.appendChild(knowledgeEmpty("No source documents are listed yet."));
+    return;
+  }
+  for (const doc of documents) {
+    const item = document.createElement("article");
+    item.className = "knowledge-card";
+
+    const main = document.createElement("div");
+    main.className = "knowledge-card-main";
+    const title = document.createElement("strong");
+    title.textContent = doc.title || doc.file_name || "Untitled document";
+    const meta = document.createElement("span");
+    const auto = doc.metadata?.auto_metadata || {};
+    const parts = [
+      doc.process || "process unset",
+      doc.doc_type || "type unset",
+      auto.version ? `version ${auto.version}` : "",
+      `${doc.chunk_count || 0} chunks`,
+      doc.has_original_file ? formatBytes(doc.stored_size_bytes || 0) : "text export only",
+    ].filter(Boolean);
+    meta.textContent = parts.join(" | ");
+    const tags = document.createElement("small");
+    const displayTags = knowledgeDocumentTags(doc);
+    tags.textContent = displayTags.length ? displayTags.join(", ") : doc.updated_at || "";
+    main.append(title, meta, tags);
+
+    const actions = document.createElement("div");
+    actions.className = "knowledge-card-actions";
+    const download = document.createElement("button");
+    download.type = "button";
+    download.dataset.action = "download-knowledge-document";
+    download.dataset.documentId = doc.id;
+    download.textContent = doc.has_original_file ? "Download" : "Export Text";
+    const replace = document.createElement("button");
+    replace.type = "button";
+    replace.dataset.action = "replace-knowledge-document";
+    replace.dataset.documentId = doc.id;
+    replace.textContent = "Replace";
+    actions.append(download, replace);
+
+    item.append(main, actions);
+    el.knowledgeDocs.appendChild(item);
+  }
+}
+
+function renderKnowledgeWiki() {
+  el.knowledgeWiki.innerHTML = "";
+  if (!state.knowledge.wikiPages.length) {
+    el.knowledgeWiki.appendChild(knowledgeEmpty("No wiki pages yet."));
+    return;
+  }
+  for (const page of state.knowledge.wikiPages) {
+    const item = document.createElement("article");
+    item.className = "knowledge-card compact";
+    const title = document.createElement("strong");
+    title.textContent = page.title || page.slug || "Untitled wiki page";
+    const meta = document.createElement("span");
+    meta.textContent = [page.page_type || "wiki", page.status || "active", page.updated_at || ""].filter(Boolean).join(" | ");
+    const summary = document.createElement("small");
+    summary.textContent = page.summary || "Correction and interpretation layer.";
+    item.append(title, meta, summary);
+    el.knowledgeWiki.appendChild(item);
+  }
+}
+
+function renderKnowledgeIssues() {
+  el.knowledgeIssues.innerHTML = "";
+  if (!state.knowledge.wikiIssues.length) {
+    el.knowledgeIssues.appendChild(knowledgeEmpty("No pending corrections."));
+    return;
+  }
+  for (const issue of state.knowledge.wikiIssues) {
+    const item = document.createElement("article");
+    item.className = "knowledge-card compact";
+    const title = document.createElement("strong");
+    title.textContent = issue.slug ? `${issue.slug}: ${issue.issue_type}` : issue.issue_type || "correction";
+    const description = document.createElement("span");
+    description.textContent = issue.description || "";
+    const meta = document.createElement("small");
+    meta.textContent = [issue.status || "pending", issue.updated_at || ""].filter(Boolean).join(" | ");
+    item.append(title, description, meta);
+    el.knowledgeIssues.appendChild(item);
+  }
+}
+
+function knowledgeEmpty(text) {
+  const empty = document.createElement("p");
+  empty.className = "knowledge-empty";
+  empty.textContent = text;
+  return empty;
+}
+
+async function openKnowledgePanel() {
+  state.knowledge.open = true;
+  renderKnowledgePanel();
+  if (!state.knowledge.documents.length && !state.knowledge.loading) {
+    await refreshKnowledgeBase();
+  }
+}
+
+function closeKnowledgePanel() {
+  state.knowledge.open = false;
+  renderKnowledgePanel();
+}
+
+function mockKnowledgePayload() {
+  return {
+    documents: [
+      {
+        id: "mock_doc_eva_guide",
+        title: "EVA EUC User Guide",
+        process: "EVA",
+        doc_type: "user_guide",
+        tags: ["EVA", "MACS", "PRM"],
+        chunk_count: 48,
+        has_original_file: true,
+        stored_size_bytes: 14000000,
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    wiki_pages: [
+      {
+        slug: "eva-overview",
+        title: "EVA Overview",
+        page_type: "process",
+        status: "active",
+        summary: "Curated interpretation and correction layer for EVA.",
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    wiki_issues: [],
+  };
+}
+
+async function refreshKnowledgeBase() {
+  state.knowledge.loading = true;
+  setKnowledgeStatus("Refreshing knowledge base...");
+  try {
+    if (MOCK_MODE) {
+      await waitForMockDelay(250);
+      const data = mockKnowledgePayload();
+      state.knowledge.documents = data.documents;
+      state.knowledge.wikiPages = data.wiki_pages;
+      state.knowledge.wikiIssues = data.wiki_issues;
+      setKnowledgeStatus("Mock knowledge browser loaded.");
+      return;
+    }
+    const params = new URLSearchParams({
+      workspace_id: el.workspaceId.value.trim() || SHARED_WORKSPACE_ID,
+      limit: "200",
+    });
+    const res = await fetch(`/agent/knowledge/documents?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+    state.knowledge.documents = data.documents || [];
+    state.knowledge.wikiPages = data.wiki_pages || [];
+    state.knowledge.wikiIssues = data.wiki_issues || [];
+    setKnowledgeStatus(`${state.knowledge.documents.length} source document(s) listed.`);
+  } catch (err) {
+    setKnowledgeStatus(`Knowledge refresh failed: ${err.message}`, "warn");
+  } finally {
+    state.knowledge.loading = false;
+    renderKnowledgePanel();
+  }
+}
+
+function resetKnowledgeForm() {
+  state.knowledge.replaceDocumentId = "";
+  el.knowledgeFileInput.value = "";
+  renderKnowledgePanel();
+}
+
+function beginReplaceKnowledgeDocument(documentId) {
+  const doc = state.knowledge.documents.find((item) => item.id === documentId);
+  if (!doc) return;
+  state.knowledge.replaceDocumentId = documentId;
+  setKnowledgeStatus(`Choose a replacement file for ${doc.title || "this document"}.`);
+  renderKnowledgePanel();
+  el.knowledgeFileInput.focus();
+}
+
+async function uploadKnowledgeDocument(event) {
+  event.preventDefault();
+  const file = el.knowledgeFileInput.files?.[0];
+  if (!file) {
+    setKnowledgeStatus("Choose a file first.", "warn");
+    return;
+  }
+  state.knowledge.uploading = true;
+  setKnowledgeStatus(state.knowledge.replaceDocumentId ? "Replacing source document..." : "Uploading source document...");
+  try {
+    if (MOCK_MODE) {
+      await waitForMockDelay(400);
+      setKnowledgeStatus("Mock mode: upload flow rendered, but no backend was changed.");
+      resetKnowledgeForm();
+      return;
+    }
+    const payload = {
+      workspace_id: el.workspaceId.value.trim() || SHARED_WORKSPACE_ID,
+      knowledge_base: "CRT Analytics",
+      title: "",
+      process: "",
+      doc_type: "",
+      tags: [],
+      summary: "",
+      file_name: file.name,
+      file_extension: getExtension(file.name),
+      media_type: file.type || inferMediaType(getExtension(file.name)),
+      data_base64: await readFileAsBase64(file),
+      chunk_strategy: "auto",
+    };
+    const documentId = state.knowledge.replaceDocumentId;
+    const res = await fetch(
+      documentId
+        ? `/agent/knowledge/documents/${encodeURIComponent(documentId)}`
+        : "/agent/knowledge/documents",
+      {
+        method: documentId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+    const created = data.child_chunks !== undefined ? `${data.child_chunks} chunks` : "document indexed";
+    resetKnowledgeForm();
+    await refreshKnowledgeBase();
+    setKnowledgeStatus(documentId ? `Document replaced (${created}).` : `Document uploaded (${created}).`);
+  } catch (err) {
+    setKnowledgeStatus(`Knowledge upload failed: ${err.message}`, "warn");
+  } finally {
+    state.knowledge.uploading = false;
+    renderKnowledgePanel();
+  }
+}
+
+function downloadKnowledgeDocument(documentId) {
+  const doc = state.knowledge.documents.find((item) => item.id === documentId);
+  if (!doc) return;
+  if (MOCK_MODE) {
+    setKnowledgeStatus("Mock mode: download works against the real backend only.");
+    return;
+  }
+  const workspaceId = encodeURIComponent(el.workspaceId.value.trim() || SHARED_WORKSPACE_ID);
+  const url = doc.download_url || `/agent/knowledge/documents/${encodeURIComponent(documentId)}/download?workspace_id=${workspaceId}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 function renderMessages() {
   el.messages.innerHTML = "";
 
@@ -478,7 +869,7 @@ function renderMessage(message) {
       const indicator = document.createElement("span");
       indicator.className = "typing-indicator";
       const label = document.createElement("span");
-      label.textContent = "Working";
+      label.textContent = "Thinking";
       indicator.appendChild(label);
       const dots = document.createElement("span");
       dots.className = "typing-dots";
@@ -490,6 +881,8 @@ function renderMessage(message) {
       }
       indicator.appendChild(dots);
       content.appendChild(indicator);
+      const liveProgress = renderLiveProgress(message.meta?.progressMessages || []);
+      if (liveProgress) content.appendChild(liveProgress);
     }
   } else {
     content.textContent = message.text || "";
@@ -503,6 +896,19 @@ function renderMessage(message) {
   if (meta) article.appendChild(meta);
 
   return article;
+}
+
+function renderLiveProgress(progressMessages) {
+  const messages = (progressMessages || []).filter(Boolean).slice(-4);
+  if (!messages.length) return null;
+  const list = document.createElement("div");
+  list.className = "live-progress";
+  for (const item of messages) {
+    const line = document.createElement("span");
+    line.textContent = item;
+    list.appendChild(line);
+  }
+  return list;
 }
 
 function renderMessageAttachments(attachments) {
@@ -540,15 +946,6 @@ function renderMessageActions(message) {
   copy.dataset.action = "copy-message";
   copy.dataset.messageId = message.id;
   actions.appendChild(copy);
-
-  if (message.role === "user") {
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.textContent = "Edit";
-    edit.dataset.action = "edit-message";
-    edit.dataset.messageId = message.id;
-    actions.appendChild(edit);
-  }
 
   return actions;
 }
@@ -1049,6 +1446,7 @@ async function sendCurrentComposer() {
 
   const displayAttachments = state.attachments.map(toDisplayAttachment);
   const payloadAttachments = state.attachments.map(toPayloadAttachment);
+  const shouldOpenKnowledge = isKnowledgeIntent(message) && displayAttachments.length === 0;
   state.attachments = [];
   state.selectedShareIds.clear();
   state.activeShareRange = null;
@@ -1067,6 +1465,7 @@ async function sendCurrentComposer() {
   };
 
   state.messages.push(userMessage);
+  if (shouldOpenKnowledge) openKnowledgePanel();
   await runAssistantRequest(userMessage, { forceScroll: true });
 }
 
@@ -1074,7 +1473,7 @@ async function runAssistantRequest(userMessage, options = {}) {
   const draftTitleForNewSession = state.draftThread && !state.sessionId ? draftThreadTitle() : "";
   state.busy = true;
   state.abortController = new AbortController();
-  setTurnMeta("Waiting for CRT Analytics", "busy");
+  setTurnMeta("Thinking...", "busy");
 
   const assistantMessage = {
     id: createId("msg"),
@@ -1087,6 +1486,7 @@ async function runAssistantRequest(userMessage, options = {}) {
   };
 
   state.messages.push(assistantMessage);
+  const thinkingTimer = startThinkingProgress(assistantMessage, userMessage);
   render({ forceScroll: options.forceScroll ?? true, smooth: true });
 
   const payload = {
@@ -1143,6 +1543,7 @@ async function runAssistantRequest(userMessage, options = {}) {
       assistantMessage.text = `Request failed: ${err.message}`;
     }
   } finally {
+    window.clearInterval(thinkingTimer);
     state.busy = false;
     state.abortController = null;
     if (MOCK_MODE) persistCurrentMockThread();
@@ -1444,19 +1845,6 @@ async function copyMessage(id) {
   }, 1200);
 }
 
-function editMessage(id) {
-  if (state.busy) return;
-  const index = state.messages.findIndex((item) => item.id === id);
-  const message = state.messages[index];
-  if (!message || message.role !== "user") return;
-  state.messages = state.messages.slice(0, index);
-  el.messageInput.value = message.text || "";
-  autoResizeInput();
-  setTurnMeta(message.attachments?.length ? "Reattach files before sending the edited message." : "");
-  render({ forceScroll: true });
-  el.messageInput.focus();
-}
-
 function newSession() {
   state.sessionId = "";
   state.lastRequestId = "";
@@ -1550,7 +1938,6 @@ function handleMessageClick(event) {
   const action = button.dataset.action;
   if (action === "toggle-share-message") toggleShareMessage(button.dataset.messageId);
   if (action === "copy-message") copyMessage(button.dataset.messageId);
-  if (action === "edit-message") editMessage(button.dataset.messageId);
 }
 
 function handleThreadListClick(event) {
@@ -1603,6 +1990,22 @@ function handleAttachmentClick(event) {
   removeAttachment(button.dataset.attachmentId);
 }
 
+function handleKnowledgePanelClick(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button || !el.knowledgePanel.contains(button)) return;
+  const action = button.dataset.action;
+  if (action === "download-knowledge-document") {
+    downloadKnowledgeDocument(button.dataset.documentId || "");
+  }
+  if (action === "replace-knowledge-document") {
+    beginReplaceKnowledgeDocument(button.dataset.documentId || "");
+  }
+  if (action === "filter-knowledge-tag") {
+    state.knowledge.tagFilter = button.dataset.tag || "";
+    renderKnowledgePanel();
+  }
+}
+
 function handleComposerClick(event) {
   const button = event.target.closest("[data-action]");
   if (!button || !el.chatForm.contains(button)) return;
@@ -1635,6 +2038,12 @@ el.chatForm.addEventListener("submit", sendMessage);
 el.chatForm.addEventListener("click", handleComposerClick);
 el.stopButton.addEventListener("click", stopRequest);
 el.newSessionButton.addEventListener("click", newSession);
+el.knowledgeButton.addEventListener("click", openKnowledgePanel);
+el.knowledgeCloseButton.addEventListener("click", closeKnowledgePanel);
+el.knowledgeRefreshButton.addEventListener("click", refreshKnowledgeBase);
+el.knowledgeCancelReplaceButton.addEventListener("click", resetKnowledgeForm);
+el.knowledgeForm.addEventListener("submit", uploadKnowledgeDocument);
+el.knowledgePanel.addEventListener("click", handleKnowledgePanelClick);
 el.threadList.addEventListener("click", handleThreadListClick);
 el.threadList.addEventListener("input", handleThreadListInput);
 el.threadList.addEventListener("keydown", handleThreadListKeydown);

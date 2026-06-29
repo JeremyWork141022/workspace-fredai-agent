@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.attachment_extractors import attachment_capabilities
+from app.attachment_extractors import attachment_capabilities, extract_attachment
 from app.config import load_config
+from app.knowledge_store import DEFAULT_KNOWLEDGE_BASE
 from app.orchestrator import WorkspaceAgentOrchestrator
 from app.scheduler import CronScheduler
 
@@ -40,14 +43,29 @@ class SessionRenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+class KnowledgeDocumentUploadRequest(BaseModel):
+    workspace_id: str = Field(default="default")
+    knowledge_base: str = Field(default=DEFAULT_KNOWLEDGE_BASE)
+    title: str = Field(default="", max_length=240)
+    process: str = Field(default="", max_length=120)
+    doc_type: str = Field(default="", max_length=120)
+    tags: List[str] = Field(default_factory=list)
+    summary: str = Field(default="", max_length=2000)
+    file_name: str = Field(min_length=1, max_length=260)
+    file_extension: str = Field(default="", max_length=24)
+    media_type: str = Field(default="", max_length=160)
+    data_base64: str = Field(min_length=1)
+    chunk_strategy: str = Field(default="auto")
+
+
 config = load_config()
 orchestrator = WorkspaceAgentOrchestrator(config)
 scheduler = CronScheduler()
 
 app = FastAPI(
-    title="Workspace FredAI Agent",
+    title="CRT Analytics Agent",
     version="0.1.0",
-    description="Internal API runtime for the Workspace FredAI Agent.",
+    description="Internal API runtime for the CRT Analytics FredAI agent.",
 )
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
@@ -57,6 +75,12 @@ ATTACHMENT_HEADER_RE = re.compile(
     r"\[Attachment\s+(?P<index>\d+):\s+(?P<name>.*?),\s+extension=(?P<extension>.*?),\s+media_type=(?P<media_type>.*?),\s+source=(?P<source>[^\]]*)\]",
     re.IGNORECASE,
 )
+
+VERSION_RE = re.compile(
+    r"(?:\bversion\b|\bver\.?\b|(?:^|[^A-Za-z0-9])v)\s*[:_-]?\s*(?P<version>\d+(?:\.\d+){0,3}[a-zA-Z]?)",
+    re.IGNORECASE,
+)
+DATE_VERSION_RE = re.compile(r"\b(?P<date>20\d{2}[-_/\.](?:0?[1-9]|1[0-2])[-_/\.](?:0?[1-9]|[12]\d|3[01]))\b")
 
 
 def _message_display_text(message: Any) -> str:
@@ -113,6 +137,86 @@ def _kind_from_attachment_header(extension: str, media_type: str) -> str:
     if media_type.startswith("text/"):
         return "text"
     return "file"
+
+
+def _infer_knowledge_metadata(file_name: str, content: str, *, existing: Any = None) -> Dict[str, Any]:
+    haystack = f"{file_name}\n{content[:5000]}".lower()
+    processes = [
+        ("Dynamic CRT Cost", ["dynamic crt cost", "dynamic cost"]),
+        ("Spot CRT Cost", ["spot crt cost", "spot cost"]),
+        ("EVA", [" eva ", "eva_", "euc eva", "eva euc"]),
+        ("MACS", [" macs ", "macs_", "macs output"]),
+        ("PRM", [" prm ", "pricing/risk", "pricing risk"]),
+    ]
+    doc_types = [
+        ("change_memo", ["change memo", "change log", "release notes", "revision history"]),
+        ("user_guide", ["user guide", "operating guide", "euc user", "how to run"]),
+        ("methodology", ["methodology", "methodological", "model methodology"]),
+        ("model_review", ["model review", "review document"]),
+        ("model_use", ["model use", "use document"]),
+        ("model_register", ["model register", "registration"]),
+        ("runbook", ["runbook", "run book", "operating procedure", "workflow"]),
+        ("script", [".py", "python script"]),
+    ]
+
+    process = ""
+    for candidate, needles in processes:
+        if any(needle in f" {haystack} " for needle in needles):
+            process = candidate
+            break
+    if not process and existing is not None:
+        process = str(getattr(existing, "process", "") or "")
+
+    doc_type = ""
+    for candidate, needles in doc_types:
+        if any(needle in haystack for needle in needles):
+            doc_type = candidate
+            break
+    if not doc_type and existing is not None:
+        doc_type = str(getattr(existing, "doc_type", "") or "")
+
+    version = ""
+    version_match = VERSION_RE.search(f"{file_name}\n{content[:1000]}")
+    if version_match:
+        version = version_match.group("version")
+    date_match = DATE_VERSION_RE.search(f"{file_name}\n{content[:1000]}")
+    effective_date = date_match.group("date").replace("_", "-").replace("/", "-").replace(".", "-") if date_match else ""
+
+    tags = []
+    for value in [process, doc_type]:
+        if value:
+            tags.append(value)
+    for keyword, tag in [
+        ("eva", "EVA"),
+        ("macs", "MACS"),
+        ("intex", "Intex"),
+        ("denodo", "Denodo"),
+        ("crt", "CRT"),
+        ("prm", "PRM"),
+        ("euc", "EUC"),
+        ("methodology", "methodology"),
+        ("user guide", "user_guide"),
+        ("change memo", "change_memo"),
+    ]:
+        if keyword in haystack and tag not in tags:
+            tags.append(tag)
+    if version:
+        tags.append(f"version:{version}")
+    if effective_date:
+        tags.append(f"date:{effective_date}")
+
+    return {
+        "process": process,
+        "doc_type": doc_type,
+        "version": version,
+        "effective_date": effective_date,
+        "tags": tags[:30],
+        "inference_method": "filename_and_text_heuristic",
+        "wiki_guidance": (
+            "If this document updates a prior version, create or update a wiki change memo page "
+            "that links the old and new document IDs and summarizes differences."
+        ),
+    }
 
 
 @app.on_event("startup")
@@ -250,6 +354,184 @@ async def rename_session(session_id: str, request: SessionRenameRequest) -> Dict
             "metadata": session.metadata,
         }
     }
+
+
+def _decode_upload(data_base64: str) -> bytes:
+    value = data_base64.strip()
+    if "," in value and value[:64].lower().startswith("data:"):
+        value = value.split(",", 1)[1]
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="data_base64 is not valid base64") from exc
+
+
+def _extract_upload_text(request: KnowledgeDocumentUploadRequest) -> tuple[str, str, bytes]:
+    raw = _decode_upload(request.data_base64)
+    extension = request.file_extension.strip() or Path(request.file_name).suffix.lower()
+    attachment = {
+        "name": request.file_name,
+        "size": len(raw),
+        "extension": extension,
+        "media_type": request.media_type,
+        "content_type": request.media_type,
+        "encoding": "base64",
+        "data_base64": base64.b64encode(raw).decode("ascii"),
+        "transfer": "inline_base64",
+    }
+    extraction = extract_attachment(attachment, index=1, workspace_root=WEB_ROOT.parent)
+    if not extraction.text.strip():
+        raise HTTPException(status_code=400, detail="The uploaded file could not be converted into searchable text.")
+    return extraction.text, extraction.warning, raw
+
+
+@app.get("/agent/knowledge/documents")
+async def list_knowledge_documents(
+    workspace_id: str = "",
+    knowledge_base: str = "",
+    process: str = "",
+    limit: int = 200,
+) -> Dict[str, Any]:
+    documents = orchestrator.knowledge_store.list_documents(
+        workspace_id=workspace_id or "default",
+        knowledge_base=knowledge_base,
+        process=process,
+        limit=max(1, min(limit, 500)),
+    )
+    wiki_pages = orchestrator.knowledge_store.search_wiki(
+        workspace_id=workspace_id or "default",
+        query="",
+        limit=200,
+    )
+    issues = orchestrator.knowledge_store.list_wiki_issues(
+        workspace_id=workspace_id or "default",
+        status="pending",
+        limit=100,
+    )
+    return {
+        "count": len(documents),
+        "documents": documents,
+        "wiki_pages": [orchestrator.knowledge_store.wiki_to_dict(page) for page in wiki_pages],
+        "wiki_issues": [orchestrator.knowledge_store.issue_to_dict(issue) for issue in issues],
+        "guidance": (
+            "Source documents are the raw knowledge base. If interpretation is wrong, keep the raw document "
+            "constant and add corrections or clarifications through wiki_write/wiki_issue."
+        ),
+    }
+
+
+@app.post("/agent/knowledge/documents")
+async def upload_knowledge_document(request: KnowledgeDocumentUploadRequest) -> Dict[str, Any]:
+    content, warning, raw = _extract_upload_text(request)
+    file_hash = orchestrator.knowledge_store.hash_bytes(raw)
+    title = request.title.strip() or Path(request.file_name).stem or request.file_name
+    inferred = _infer_knowledge_metadata(request.file_name, content)
+    process = request.process.strip() or inferred["process"]
+    doc_type = request.doc_type.strip() or inferred["doc_type"]
+    tags = list(dict.fromkeys([*request.tags, *inferred["tags"]]))
+    result = orchestrator.knowledge_store.ingest_document(
+        workspace_id=request.workspace_id,
+        knowledge_base=request.knowledge_base or DEFAULT_KNOWLEDGE_BASE,
+        title=title,
+        content=content,
+        source_type="attachment",
+        source_uri=f"upload:{request.file_name}:{file_hash[:12]}",
+        file_name=request.file_name,
+        file_extension=request.file_extension or Path(request.file_name).suffix.lower(),
+        process=process,
+        doc_type=doc_type,
+        tags=tags,
+        metadata={"uploaded_via": "knowledge_browser", "raw_file_hash": file_hash, "auto_metadata": inferred},
+        summary=request.summary,
+        chunk_strategy=request.chunk_strategy or "auto",
+    )
+    document_id = str(result.get("document", {}).get("id") or "")
+    orchestrator.knowledge_store.save_document_file(
+        workspace_id=request.workspace_id,
+        document_id=document_id,
+        file_name=request.file_name,
+        media_type=request.media_type,
+        content=raw,
+    )
+    if warning:
+        result["parser_warning"] = warning
+    if inferred.get("version"):
+        result["wiki_change_memo_guidance"] = (
+            "Version hint detected. If this supersedes or differs from another source document, "
+            "use wiki_write to create a change memo page linking document IDs and summarizing changes."
+        )
+    return result
+
+
+@app.put("/agent/knowledge/documents/{document_id}")
+async def replace_knowledge_document(document_id: str, request: KnowledgeDocumentUploadRequest) -> Dict[str, Any]:
+    existing = orchestrator.knowledge_store.get_document(workspace_id=request.workspace_id, document_id=document_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    content, warning, raw = _extract_upload_text(request)
+    file_hash = orchestrator.knowledge_store.hash_bytes(raw)
+    inferred = _infer_knowledge_metadata(request.file_name, content, existing=existing)
+    process = request.process.strip() or inferred["process"] or existing.process
+    doc_type = request.doc_type.strip() or inferred["doc_type"] or existing.doc_type
+    tags = list(dict.fromkeys([*(request.tags or existing.tags), *inferred["tags"]]))
+    result = orchestrator.knowledge_store.ingest_document(
+        workspace_id=request.workspace_id,
+        knowledge_base=request.knowledge_base or DEFAULT_KNOWLEDGE_BASE,
+        title=request.title.strip() or existing.title,
+        content=content,
+        source_type="attachment",
+        source_uri=existing.source_uri,
+        file_name=request.file_name,
+        file_extension=request.file_extension or Path(request.file_name).suffix.lower(),
+        process=process,
+        doc_type=doc_type,
+        tags=tags,
+        metadata={
+            **existing.metadata,
+            "uploaded_via": "knowledge_browser",
+            "raw_file_hash": file_hash,
+            "replaced_document_id": document_id,
+            "auto_metadata": inferred,
+        },
+        summary=request.summary or existing.summary,
+        chunk_strategy=request.chunk_strategy or "auto",
+    )
+    orchestrator.knowledge_store.save_document_file(
+        workspace_id=request.workspace_id,
+        document_id=document_id,
+        file_name=request.file_name,
+        media_type=request.media_type,
+        content=raw,
+    )
+    if warning:
+        result["parser_warning"] = warning
+    result["replaced"] = True
+    if inferred.get("version"):
+        result["wiki_change_memo_guidance"] = (
+            "Version hint detected. If this supersedes or differs from another source document, "
+            "use wiki_write to create a change memo page linking document IDs and summarizing changes."
+        )
+    return result
+
+
+@app.get("/agent/knowledge/documents/{document_id}/download")
+async def download_knowledge_document(document_id: str, workspace_id: str = "") -> Response:
+    workspace_id = workspace_id or "default"
+    stored = orchestrator.knowledge_store.get_document_file(workspace_id=workspace_id, document_id=document_id)
+    if stored:
+        return Response(
+            content=stored["content"],
+            media_type=stored["media_type"] or "application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={stored['file_name']}"},
+        )
+    fallback = orchestrator.knowledge_store.document_text_export(workspace_id=workspace_id, document_id=document_id)
+    if not fallback:
+        raise HTTPException(status_code=404, detail="knowledge document not found")
+    return Response(
+        content=fallback["content"].encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={fallback['file_name']}"},
+    )
 
 
 @app.get("/agent/traces/{request_id}")

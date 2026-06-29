@@ -2,7 +2,7 @@
 
 Date: 2026-06-27
 
-This document is a handoff for rebuilding a ChatGPT-style UI from scratch for the Workspace FredAI Agent. The research source is the cloned `assistant-ui/assistant-ui` repository under `assistant-ui-research/`, especially `apps/docs/components/examples/chatgpt.tsx`, plus the local FredAI agent project in this workspace.
+This document is a handoff for rebuilding a ChatGPT-style UI from scratch for the CRT Analytics Agent. The research source is the cloned `assistant-ui/assistant-ui` repository under `assistant-ui-research/`, especially `apps/docs/components/examples/chatgpt.tsx`, plus the local FredAI agent project in this workspace.
 
 The goal is not to import `@assistant-ui/react` or copy assistant-ui source files into this project. The goal is to understand its architecture deeply enough to rebuild the parts we need using plain browser APIs, or a very small React-only layer if the work environment allows it.
 
@@ -17,7 +17,7 @@ assistant-ui does include a full ChatGPT-style example, but that example is not 
 - `packages/react-ai-sdk/src/*` adapts Vercel AI SDK messages and streams into assistant-ui's runtime.
 - `packages/ui/src/components/assistant-ui/thread.tsx` is a separate styled shadcn-style thread kit built on the same primitives.
 
-For the Workspace FredAI Agent, the best path is to rebuild the ChatGPT UI as a small local UI on top of the existing `/agent/respond` FastAPI endpoint first. Add streaming, cancellation, branches, attachments, and tool rendering later only when needed.
+For the CRT Analytics Agent, the best path is to rebuild the ChatGPT UI as a small local UI on top of the existing `/agent/respond` FastAPI endpoint first. Add streaming, cancellation, branches, attachments, and tool rendering later only when needed.
 
 The current project already has a no-package browser UI:
 

@@ -38,7 +38,7 @@ internal API request
 
 Short-term session memory is stored in SQLite and the latest `WORKSPACE_AGENT_SESSION_CONTEXT_MESSAGES` user/assistant messages are included directly in each model call.
 
-Curated long-term memory lives in `.runtime/memories/MEMORY.md` and `.runtime/memories/USER.md`; it is loaded into the instructions every turn.
+Curated long-term memory lives only in `.runtime/memories/MEMORY.md`; it is loaded into the instructions every turn. User-specific or session-specific recall belongs in SQLite session history, workspace notes, or a future user-separation mode, not in a separate curated Markdown file.
 
 Automatic prefetch runs before the first FredAI call. It injects relevant local memory, triggered hooks, prior turns, and workspace notes into a temporary `<memory-context>` block on the latest user message.
 
@@ -63,4 +63,3 @@ Tools are passed as chat-completions JSON schemas. FredAI chooses tool calls; Py
 - `tool_result`
 - `final_answer`
 - `request_error`
-

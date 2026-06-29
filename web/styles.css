@@ -151,6 +151,20 @@ button:disabled {
   line-height: 1;
 }
 
+.sidebar-action-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sidebar-action-button:hover {
+  background: var(--surface-strong);
+}
+
 .thread-list {
   display: flex;
   flex: 1;
@@ -341,6 +355,201 @@ textarea:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+
+.knowledge-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(520px, calc(100vw - 32px));
+  height: 100vh;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: var(--page);
+  box-shadow: -24px 0 60px rgba(17, 24, 39, 0.12);
+  padding: 20px;
+}
+
+.knowledge-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.knowledge-header h2,
+.knowledge-form h3,
+.knowledge-section h3 {
+  margin: 0;
+}
+
+.knowledge-header h2 {
+  font-size: 22px;
+}
+
+.knowledge-header p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.knowledge-form {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.knowledge-form-header,
+.knowledge-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-form-header h3,
+.knowledge-section h3 {
+  font-size: 15px;
+}
+
+.knowledge-form-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.knowledge-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.knowledge-form textarea {
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.knowledge-toolbar span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.knowledge-toolbar span.warn {
+  color: var(--warn);
+}
+
+.knowledge-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.knowledge-tags button {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.knowledge-tags button.active {
+  border-color: var(--accent);
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+
+.knowledge-section {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-list {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.knowledge-card.compact {
+  grid-template-columns: 1fr;
+}
+
+.knowledge-card-main,
+.knowledge-card.compact {
+  min-width: 0;
+}
+
+.knowledge-card-main,
+.knowledge-card.compact {
+  display: grid;
+  gap: 4px;
+}
+
+.knowledge-card strong,
+.knowledge-card span,
+.knowledge-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.knowledge-card strong {
+  font-size: 14px;
+}
+
+.knowledge-card span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.knowledge-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.knowledge-card-actions {
+  display: flex;
+  align-items: start;
+  gap: 6px;
+}
+
+.knowledge-card-actions button,
+.knowledge-form-header button,
+.knowledge-toolbar button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.knowledge-empty {
+  margin: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 12px;
+  font-size: 13px;
 }
 
 .chat {
@@ -534,6 +743,31 @@ textarea:focus {
 
 .typing-dots span:nth-child(3) {
   animation-delay: 0.32s;
+}
+
+.live-progress {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-progress span {
+  position: relative;
+  padding-left: 14px;
+}
+
+.live-progress span::before {
+  position: absolute;
+  left: 0;
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.7;
 }
 
 @keyframes typingBlink {
@@ -887,5 +1121,15 @@ textarea:focus {
   .composer-actions {
     grid-column: 2;
     justify-self: end;
+  }
+
+  .knowledge-panel {
+    width: 100vw;
+    padding: 16px;
+  }
+
+  .knowledge-form-grid,
+  .knowledge-card {
+    grid-template-columns: 1fr;
   }
 }

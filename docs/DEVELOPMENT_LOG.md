@@ -3,6 +3,182 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-29 - Single Curated Memory And Knowledge Browser
+
+### Request
+
+Move curated memory to a single `MEMORY.md` file, remove the per-message chat
+edit control, and add a UI/API path for users to inspect and manage source
+documents in the knowledge base.
+
+### Changes
+
+- Removed `.runtime/memories/USER.md` from the tracked runtime files.
+- Updated `app/memory_manager.py` so curated memory is loaded only from
+  `.runtime/memories/MEMORY.md`.
+- Updated the `memory` tool schema so `target` can only be `memory`.
+- Updated `routine_rule` curated-memory side effects to default to `memory`,
+  not the former user-profile target.
+- Removed `WORKSPACE_AGENT_USER_MEMORY_CHAR_LIMIT` from runtime configuration.
+- Updated default agent identity to `CRT Analytics Agent`.
+- Updated runtime instructions to treat `MEMORY.md` as stable operating
+  guidance only.
+- Removed the per-message `Edit` button and dead edit flow from the chat UI.
+- Added a left-sidebar `Knowledge Base` button that opens a browser drawer.
+- Added knowledge-browser UI for:
+  - source-document listing,
+  - source-document upload,
+  - source-document replacement,
+  - original-file download when available,
+  - text export for older indexed documents without retained raw bytes,
+  - wiki page listing,
+  - pending correction/issue listing.
+- Added `knowledge_files` SQLite storage to retain raw uploaded files for new
+  knowledge documents.
+- Added FastAPI endpoints:
+  - `GET /agent/knowledge/documents`
+  - `POST /agent/knowledge/documents`
+  - `PUT /agent/knowledge/documents/{document_id}`
+  - `GET /agent/knowledge/documents/{document_id}/download`
+- Rewrote `docs/CURATED_MEMORY_GUIDE.md` for the single-file memory model.
+
+### Design Notes
+
+- Raw source documents are the governed source-of-truth layer.
+- Wiki pages and wiki issues are the correction, supplement, and interpretation
+  layer above raw documents.
+- If the LLM misunderstands an EVA, Dynamic CRT Cost, Spot CRT Cost, workflow,
+  or PRM detail, the source document should not be silently rewritten. The user
+  should add a wiki correction or issue, preferably with `chunk_refs` pointing
+  back to source evidence.
+- Existing documents ingested before this change may not have original file
+  bytes in `knowledge_files`. Those remain searchable through chunks and can be
+  downloaded as reconstructed text exports.
+- Newly uploaded/replaced source documents retain original bytes in SQLite.
+  This is intentionally simple for the prototype and avoids a new package,
+  shared-drive storage dependency, or separate file server.
+
+### Follow-Ups
+
+- Add delete/archive controls for obsolete source documents if governance allows.
+- Add a polished wiki page editor/reader in the UI.
+- Add source-document version history if replacement needs audit trails beyond
+  the current SQLite metadata.
+- Add a future user/privacy mode before broad deployment if every user should
+  not share the same visible session and knowledge history.
+
+## 2026-06-29 - Knowledge Drawer Simplification And Thinking Progress
+
+### Request
+
+Simplify the knowledge-base drawer so users do not need to fill out process,
+document type, tags, and summary manually during upload. Add a way for the UI
+to surface what the agent is doing while a long request is running.
+
+### Changes
+
+- Simplified the drawer upload form to a single file picker.
+- Added automatic backend metadata inference for documentation uploads:
+  - process hints such as EVA, MACS, PRM, Dynamic CRT Cost, Spot CRT Cost,
+  - document-type hints such as user guide, methodology, model review, model
+    use, model register, runbook, script, and change memo,
+  - tag hints,
+  - version/date hints such as `Version 1.5`, `v2.0`, or `_v7`.
+- Added tag filter buttons in the knowledge drawer, derived from document tags
+  and inferred metadata.
+- Kept source uploads separate from wiki correction logic:
+  - source documents remain raw/indexed documentation,
+  - wiki pages and wiki issues remain the interpretation, supplement,
+    correction, and change-memo layer.
+- Added guidance to upload responses when a version is detected: use wiki pages
+  to create a change memo linking document IDs and summarizing differences.
+- Added automatic drawer opening when a user asks knowledge-base inventory
+  questions such as "show the knowledge base" or "what documentation is
+  indexed." Simple chat file uploads do not open the drawer automatically.
+- Changed the running assistant indicator from `Working...` to `Thinking...`.
+- Added visible live progress hints during long-running requests, for example:
+  reading thread/memory, preparing attachments, checking whether knowledge/wiki
+  tools are needed, and waiting for FredAI to choose tools or answer.
+
+### Design Notes
+
+- The live progress UI does not expose hidden chain-of-thought. It only shows
+  operational status so users are not staring at an unexplained spinner.
+- True real-time tool progress would require a streaming response, polling job,
+  or server-sent events endpoint. The current implementation provides frontend
+  progress hints during the blocking `/agent/respond` call and preserves the
+  actual tool/progress metadata after the response completes.
+- Multiple versions of a guide should coexist as separate source documents.
+  The source-document metadata can identify version hints, while wiki change
+  memo pages should explain what changed and link related document IDs.
+
+## 2026-06-29 - Answerability Guard For Definition Questions
+
+### Request
+
+Avoid awkward circular answers where the source document only mentions a term
+but does not define it. Example: the EVA guide lists `Loan List.xlsx` as an
+input file, then the user asks "What is Loan List.xlsx?" The agent should not
+answer only "it is one of the required input files."
+
+### Changes
+
+- Added a concise answerability policy to `.runtime/memories/MEMORY.md`.
+- Added the same policy to the default curated-memory seed in
+  `app/memory_manager.py`.
+- Added runtime instruction text in `app/orchestrator.py` so the rule remains
+  visible even if curated memory changes later.
+- Added a lightweight knowledge-gap detector inside `app/tools.py` for the
+  knowledge tools:
+  - detects definition-style questions such as `what is X`, `define X`, and
+    `what does X mean`;
+  - checks the already-retrieved chunk text for definition cues versus
+    mention/list-only cues;
+  - returns a `knowledge_gap` object from `knowledge_search`;
+  - lets `knowledge_read` accept `user_question` and return a deeper
+    `knowledge_gap` result from the chunks it read.
+- Updated the `knowledge_read` tool schema to include `user_question`.
+- Added a regression test proving mention-only evidence is flagged as
+  `definition_not_found`.
+
+### Runtime Design
+
+- This is intentionally not a new model call.
+- No additional OCR, embedding search, or long summarization happens.
+- The detector only runs over text already retrieved by `knowledge_search` or
+  `knowledge_read`.
+- When `evidence_status=definition_not_found`, FredAI should say the indexed
+  documentation mentions the term but does not define it, provide only clearly
+  labeled inference if useful, and create or suggest a wiki issue/glossary
+  correction.
+
+### Current Drawer Trigger
+
+The knowledge drawer auto-open trigger is frontend-only JavaScript in
+`web/app.js` (`isKnowledgeIntent`). It is not a model tool call. Before sending
+a chat message, the UI checks the typed text for inventory-style wording such
+as:
+
+- `show/open knowledge base`
+- `what documentation is indexed`
+- `what is uploaded/stored`
+- `documentation folder/library/inventory`
+- `wiki pages/issues/corrections`
+
+If the message has no file attachments and matches those patterns, the drawer
+opens while the normal `/agent/respond` request proceeds.
+
+### Current Pending-Correction Logic
+
+- Pending corrections are backend records in the `wiki_issues` SQLite table.
+- The LLM can create them with the `wiki_issue` tool when a user reports wrong,
+  missing, contradictory, or stale process knowledge.
+- The drawer lists pending issues through `GET /agent/knowledge/documents`.
+- Today there is no manual drawer form for creating a correction. A user can
+  ask the agent to "log a correction" or backend code can call the tool/store.
+- Future work should add a review UI for daily session auditing: flag answer,
+  draft correction, approve into wiki glossary/change memo.
+
 ## 2026-06-28 - Context Window And Token-Budget Concern
 
 ### Concern
@@ -16,9 +192,8 @@ broader multi-user rollout.
 
 - `WORKSPACE_AGENT_SESSION_CONTEXT_MESSAGES` limits recent user/assistant
   history sent to FredAI. Default is `16`.
-- Curated memory has character limits through
-  `WORKSPACE_AGENT_MEMORY_CHAR_LIMIT` and
-  `WORKSPACE_AGENT_USER_MEMORY_CHAR_LIMIT`.
+- Curated memory has a character limit through
+  `WORKSPACE_AGENT_MEMORY_CHAR_LIMIT`.
 - Attachment extraction is bounded:
   - `MAX_INLINE_ATTACHMENT_BYTES = 6 * 1024 * 1024`
   - `MAX_EXTRACTED_CHARS = 60000`
@@ -450,7 +625,7 @@ path is still explicit tool use: `wiki_search` / `wiki_read` or
 ### UI Change
 
 The assistant waiting indicator changed from one pulsing dot to three staggered
-blinking dots after the word `Working`. This is only a visual state change in
+blinking dots after the word `Thinking`. This is only a visual state change in
 the browser UI and does not affect backend execution.
 
 ## 2026-06-28 - Sidebar Identity And Future Execution Visualization

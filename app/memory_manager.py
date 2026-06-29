@@ -16,26 +16,27 @@ ENTRY_DELIMITER = "\n---ENTRY---\n"
 
 DEFAULT_MEMORY_ENTRIES = [
     (
-        "Workspace FredAI Agent identity: this agent serves an internal workspace API, "
-        "keeps durable session and memory context, and uses FredAI as the only model gateway."
+        "CRT Analytics Agent identity: this agent is an expert on the execution, methodology, "
+        "workflow, and PRM created for CRT Analytics, including EVA, Dynamic CRT Cost, and Spot CRT Cost. "
+        "It uses FredAI as the only model gateway."
     ),
     (
-        "Memory policy: MEMORY.md is for stable agent operating rules and retrieval policy. "
-        "USER.md is for stable user preferences and profile facts. Raw logs, large documents, "
-        "repeated task data, and bulky notes belong in SQLite workspace notes or conversation history."
+        "Memory policy: MEMORY.md is the only curated always-on Markdown memory. Use it for stable "
+        "agent operating rules, retrieval policy, and compact correction policy. Raw logs, large documents, "
+        "repeated task data, and bulky notes belong in SQLite workspace notes, wiki pages, source knowledge "
+        "documents, or conversation history."
     ),
     (
-        "Retrieval policy: use curated memory as always-on guidance, automatic prefetch as temporary "
-        "turn context, workspace_note_search for durable workspace facts, and session_search for older "
-        "conversation details outside the recent context window."
+        "Retrieval policy: use MEMORY.md as always-on guidance, automatic prefetch as temporary turn context, "
+        "workspace_note_search for durable workspace facts, session_search for older conversation details, "
+        "wiki_search/wiki_read for curated interpretations and corrections, and knowledge_search/knowledge_read "
+        "for source-document evidence."
     ),
-]
-
-DEFAULT_USER_ENTRIES = [
     (
-        "No confirmed user profile has been provided yet. Save stable preferences, language choice, "
-        "communication style, and workspace-specific profile facts here with the memory tool."
-    )
+        "Answerability policy: for what-is/define/explain questions, do not answer from source text that merely "
+        "lists or mentions the term. If indexed documents do not define the term, say so, give only clearly "
+        "labeled inference when useful, and create or suggest a wiki_issue/wiki glossary correction."
+    ),
 ]
 
 
@@ -101,28 +102,21 @@ class MemoryToolResult:
 class CuratedMemoryStore:
     """File-backed curated memory for always-on prompt context."""
 
-    def __init__(self, *, root: Optional[Path] = None, memory_char_limit: int = 2800, user_char_limit: int = 1600):
+    def __init__(self, *, root: Optional[Path] = None, memory_char_limit: int = 2800):
         self.root = root or memory_dir()
         self.memory_char_limit = memory_char_limit
-        self.user_char_limit = user_char_limit
         self.memory_entries: List[str] = []
-        self.user_entries: List[str] = []
-        self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot = ""
         self.load_from_disk()
 
     def load_from_disk(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self._seed_if_empty("memory", DEFAULT_MEMORY_ENTRIES)
-        self._seed_if_empty("user", DEFAULT_USER_ENTRIES)
         self.memory_entries = list(dict.fromkeys(self._read_file(self._path_for("memory"))))
-        self.user_entries = list(dict.fromkeys(self._read_file(self._path_for("user"))))
-        self._system_prompt_snapshot = {
-            "memory": self._render_block("memory", self.memory_entries),
-            "user": self._render_block("user", self.user_entries),
-        }
+        self._system_prompt_snapshot = self._render_block("memory", self.memory_entries)
 
     def format_for_system_prompt(self, target: str) -> str:
-        return self._system_prompt_snapshot.get(target, "")
+        return self._system_prompt_snapshot if target == "memory" else ""
 
     def tool(
         self,
@@ -132,7 +126,7 @@ class CuratedMemoryStore:
         content: Optional[str] = None,
         old_text: Optional[str] = None,
     ) -> Dict[str, Any]:
-        target = target if target in {"memory", "user"} else "memory"
+        target = "memory"
         if action == "add":
             result = self.add(target=target, content=content or "")
         elif action == "replace":
@@ -197,18 +191,12 @@ class CuratedMemoryStore:
 
     def _read_latest(self, target: str) -> List[str]:
         entries = list(dict.fromkeys(self._read_file(self._path_for(target))))
-        if target == "user":
-            self.user_entries = entries
-        else:
-            self.memory_entries = entries
+        self.memory_entries = entries
         return entries
 
     def _write_entries(self, target: str, entries: List[str]) -> None:
         _atomic_write(self._path_for(target), ENTRY_DELIMITER.join(entries))
-        if target == "user":
-            self.user_entries = entries
-        else:
-            self.memory_entries = entries
+        self.memory_entries = entries
         self.load_from_disk()
 
     def _result(self, success: bool, target: str, message: str, error: str) -> MemoryToolResult:
@@ -226,7 +214,7 @@ class CuratedMemoryStore:
         )
 
     def _path_for(self, target: str) -> Path:
-        return self.root / ("USER.md" if target == "user" else "MEMORY.md")
+        return self.root / "MEMORY.md"
 
     def _seed_if_empty(self, target: str, entries: List[str]) -> None:
         path = self._path_for(target)
@@ -235,7 +223,7 @@ class CuratedMemoryStore:
         _atomic_write(path, ENTRY_DELIMITER.join(entries))
 
     def _limit(self, target: str) -> int:
-        return self.user_char_limit if target == "user" else self.memory_char_limit
+        return self.memory_char_limit
 
     def _entry_len(self, target: str, entries: List[str]) -> int:
         return len(ENTRY_DELIMITER.join(entries)) if entries else 0
@@ -255,8 +243,7 @@ class CuratedMemoryStore:
         limit = self._limit(target)
         content = ENTRY_DELIMITER.join(entries)
         pct = int((len(content) / limit) * 100) if limit else 0
-        title = "USER PROFILE" if target == "user" else "MEMORY"
-        return f"{title} [{pct}% - {len(content):,}/{limit:,} chars]\n{content}"
+        return f"MEMORY [{pct}% - {len(content):,}/{limit:,} chars]\n{content}"
 
 
 class MemoryProvider(ABC):
@@ -296,8 +283,7 @@ class BuiltinCuratedMemoryProvider(MemoryProvider):
         self.store = store
 
     def system_prompt_block(self) -> str:
-        blocks = [self.store.format_for_system_prompt("memory"), self.store.format_for_system_prompt("user")]
-        return "\n\n".join(block for block in blocks if block.strip())
+        return self.store.format_for_system_prompt("memory")
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [
@@ -305,13 +291,14 @@ class BuiltinCuratedMemoryProvider(MemoryProvider):
                 "name": "memory",
                 "description": (
                     "Save durable curated memory that survives across sessions. Use for compact stable "
-                    "preferences, user profile facts, environment facts, and standing operating rules."
+                    "agent behavior, retrieval policy, environment facts, and standing operating rules. "
+                    "Source documents and corrections belong in the knowledge/wiki tools, not directly in MEMORY.md."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["add", "replace", "remove"]},
-                        "target": {"type": "string", "enum": ["memory", "user"]},
+                        "target": {"type": "string", "enum": ["memory"]},
                         "content": {"type": "string", "description": "Required for add and replace."},
                         "old_text": {"type": "string", "description": "Unique substring for replace or remove."},
                     },
@@ -493,7 +480,6 @@ class AgentMemoryManager:
     def __init__(self, config: AppConfig, sqlite_store: MemoryStore):
         self.curated_store = CuratedMemoryStore(
             memory_char_limit=config.memory_char_limit,
-            user_char_limit=config.user_memory_char_limit,
         )
         self.sqlite_store = sqlite_store
         self.prefetch_enabled = config.memory_prefetch_enabled
@@ -598,4 +584,3 @@ def render_memory_context_block(context: str) -> str:
         f"{clean}\n"
         "</memory-context>"
     )
-
