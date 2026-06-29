@@ -82,8 +82,10 @@ button:disabled {
 
 .brand {
   display: grid;
+  justify-items: center;
   gap: 10px;
-  padding: 0 6px 10px;
+  padding: 0 6px 12px;
+  text-align: center;
 }
 
 .logo-frame {
@@ -104,39 +106,48 @@ button:disabled {
   object-fit: contain;
 }
 
+.brand-copy {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+}
+
 .brand h1 {
   margin: 0;
   font-size: 17px;
   line-height: 1.2;
+  text-align: center;
 }
 
 .brand p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
+  text-align: center;
 }
 
 .new-thread-button {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  height: 40px;
-  min-height: 40px;
+  height: 50px;
+  min-height: 50px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  padding: 0 10px;
-  font-size: 14px;
+  padding: 0 14px;
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .new-thread-button span {
   display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  font-size: 20px;
+  width: 24px;
+  height: 24px;
+  font-size: 26px;
   line-height: 1;
 }
 

@@ -97,6 +97,10 @@ const el = {
   copySessionButton: document.querySelector("#copySessionButton"),
 };
 
+function setOptionalText(node, value) {
+  if (node) node.textContent = value;
+}
+
 function createId(prefix) {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
     return `${prefix}_${window.crypto.randomUUID().replaceAll("-", "")}`;
@@ -729,7 +733,7 @@ async function refreshHealth() {
     el.connectionStatus.textContent = "UI mock mode";
     el.connectionStatus.className = "";
     el.modelName.textContent = "mock-ui";
-    el.toolCount.textContent = "4";
+    setOptionalText(el.toolCount, "4");
     state.attachmentConfig.inlineBase64 = true;
     state.attachmentConfig.maxInlineBytes = DEFAULT_BINARY_INLINE_LIMIT;
     state.attachmentConfig.acceptedExtensions = Array.from(SUPPORTED_EXTENSIONS);
@@ -744,7 +748,7 @@ async function refreshHealth() {
     el.connectionStatus.textContent = "Server online";
     el.connectionStatus.className = "";
     el.modelName.textContent = data.model || "-";
-    el.toolCount.textContent = String((data.memory?.tools || data.tools || []).length || "-");
+    setOptionalText(el.toolCount, String((data.memory?.tools || data.tools || []).length || "-"));
 
     const attachmentCaps = data.attachment_capabilities || data.capabilities?.attachments || {};
     state.attachmentConfig.inlineBase64 =
@@ -910,7 +914,7 @@ async function loadThread(sessionId, options = {}) {
     state.activeShareRange = options.range || null;
     state.lastRequestId = "";
     el.sessionId.value = state.sessionId;
-    el.lastRequest.textContent = "-";
+    setOptionalText(el.lastRequest, "-");
     replaceThreadUrl(state.sessionId, state.activeShareRange);
     setTurnMeta("");
     render({
@@ -1109,7 +1113,7 @@ async function runAssistantRequest(userMessage, options = {}) {
       state.sessionId = data.session_id || "";
       state.lastRequestId = data.request_id || "";
       el.sessionId.value = state.sessionId;
-      el.lastRequest.textContent = state.lastRequestId || "-";
+      setOptionalText(el.lastRequest, state.lastRequestId || "-");
       if (data.user_message_id) userMessage.serverId = String(data.user_message_id);
       if (data.assistant_message_id) assistantMessage.serverId = String(data.assistant_message_id);
 
@@ -1174,7 +1178,7 @@ async function completeMockAssistantResponse(userMessage, assistantMessage) {
   state.sessionId = state.sessionId || el.sessionId.value.trim() || `mock_sess_${Date.now()}`;
   state.lastRequestId = `mock_req_${Date.now()}`;
   el.sessionId.value = state.sessionId;
-  el.lastRequest.textContent = state.lastRequestId;
+  setOptionalText(el.lastRequest, state.lastRequestId);
   userMessage.serverId = userMessage.serverId || userMessage.id;
   assistantMessage.serverId = assistantMessage.serverId || assistantMessage.id;
 
@@ -1476,7 +1480,7 @@ function newSession() {
   }
   state.attachments = [];
   el.sessionId.value = "";
-  el.lastRequest.textContent = "-";
+  setOptionalText(el.lastRequest, "-");
   replaceThreadUrl("");
   setTurnMeta("");
   render({ forceScroll: true });
