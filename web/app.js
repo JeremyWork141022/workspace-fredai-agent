@@ -74,7 +74,6 @@ const el = {
   modelName: document.querySelector("#modelName"),
   toolCount: document.querySelector("#toolCount"),
   lastRequest: document.querySelector("#lastRequest"),
-  currentThreadTitle: document.querySelector("#currentThreadTitle"),
   threadList: document.querySelector("#threadList"),
   workspaceId: document.querySelector("#workspaceId"),
   userId: document.querySelector("#userId"),
@@ -312,7 +311,6 @@ function updateComposerControls() {
 
 function render(options = {}) {
   const shouldPin = !options.preserveScroll && (options.forceScroll || isNearBottom());
-  el.currentThreadTitle.textContent = currentThreadTitle();
   renderThreads();
   renderMessages();
   renderAttachments();
@@ -860,6 +858,7 @@ function mapServerMessage(message) {
     status: ["error", "cancelled"].includes(status) ? status : "complete",
     text: message.text || "",
     createdAt: message.created_at || new Date().toISOString(),
+    attachments: message.attachments || metadata.attachments || [],
     meta: {
       durationMs: metadata.request_duration_ms,
       toolNames: metadata.tool_names || [],

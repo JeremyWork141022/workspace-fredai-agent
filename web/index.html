@@ -10,7 +10,9 @@
     <main class="shell">
       <aside class="sidebar" aria-label="Thread history">
         <div class="brand">
-          <div class="mark" aria-hidden="true">C</div>
+          <div class="logo-frame">
+            <img class="brand-logo" src="/static/logo-placeholder.svg" alt="CRT Analytics" />
+          </div>
           <div>
             <h1>CRT Analytics Agent</h1>
             <p id="connectionStatus">Checking server</p>
@@ -45,13 +47,6 @@
       </aside>
 
       <section class="chat" aria-label="Agent chat">
-        <header class="chat-header">
-          <div>
-            <span>Current thread</span>
-            <h2 id="currentThreadTitle">Ask me anything about CRT Analytics</h2>
-          </div>
-        </header>
-
         <div id="messages" class="messages" aria-live="polite"></div>
         <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
           Latest
@@ -112,6 +107,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260628-rename-draft"></script>
+    <script src="/static/app.js?v=20260628-sidebar-logo"></script>
   </body>
 </html>

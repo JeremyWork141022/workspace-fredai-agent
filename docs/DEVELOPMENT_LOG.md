@@ -452,3 +452,55 @@ path is still explicit tool use: `wiki_search` / `wiki_read` or
 The assistant waiting indicator changed from one pulsing dot to three staggered
 blinking dots after the word `Working`. This is only a visual state change in
 the browser UI and does not affect backend execution.
+
+## 2026-06-28 - Sidebar Identity And Future Execution Visualization
+
+### UI Change
+
+- Removed the duplicate chat-pane title block that showed `Current thread` and
+  the thread name above the conversation.
+- The active thread identity now lives in the left sidebar thread list, where
+  the selected thread is highlighted.
+- Made the desktop sidebar sticky with its own 100vh layout so the thread list,
+  status area, and logo stay visible while the conversation scrolls.
+- Replaced the square letter-mark placeholder with a wide logo slot designed
+  around a 3.5:1 image ratio. The current placeholder is
+  `web/logo-placeholder.svg`; a real work logo can replace it later.
+
+### Design Note
+
+An interactive visualization of what the agent is doing could make this UI much
+stronger. A future panel could show the live execution timeline: knowledge
+prefetch, tool calls, file parsing, retrieved chunks, wiki reads, FredAI calls,
+and final answer assembly. This should be designed as an operational trace view
+for users, not only a developer/debug log.
+
+## 2026-06-28 - Compact Attachment History Display
+
+### Problem
+
+The backend expands uploaded attachments into model-readable text such as
+`[Attachment 1: ...]` followed by extracted document/table content. That is
+useful for FredAI and tool execution, but it made reloaded chat history look
+like a very long wall of raw attachment metadata and parsed file text.
+
+### Change
+
+- User messages now store lightweight display metadata alongside the expanded
+  model-facing content:
+  - `display_text`
+  - lightweight `attachments` records with name, type/kind, size, extension,
+    media type, and transfer mode
+- `/agent/sessions/{session_id}` returns the compact display text and
+  attachment chip metadata for user-visible history.
+- The expanded content remains in the message `content` field and in the
+  database so FredAI can still receive parsed attachment content as context.
+- The API also compacts older historical messages that already contain embedded
+  `[Attachment ...]` blocks by showing only the user text before the block and
+  reconstructing basic attachment chips from the attachment headers.
+
+### Future Work
+
+True file re-download after page reload needs a real upload/storage endpoint.
+The current change preserves attachment identity in chat history without storing
+large file bytes in the session list response.

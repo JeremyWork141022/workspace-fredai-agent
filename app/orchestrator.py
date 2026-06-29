@@ -146,7 +146,12 @@ class WorkspaceAgentOrchestrator:
         )
 
         content = self._build_user_content(message, attachments or [])
-        user_record = self.session_store.append_message(session_id=session.id, role="user", content=content)
+        user_record = self.session_store.append_message(
+            session_id=session.id,
+            role="user",
+            content=content,
+            metadata=self._user_display_metadata(message, attachments or []),
+        )
         user_message_id = user_record.id
         trace(
             "stored_user_message",
@@ -602,6 +607,50 @@ Runtime architecture:
         if not media_parts:
             return text
         return [{"type": "text", "text": text}, *media_parts]
+
+    def _user_display_metadata(self, message: str, attachments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        display_attachments: List[Dict[str, Any]] = []
+        for index, attachment in enumerate(attachments, start=1):
+            if not isinstance(attachment, dict):
+                display_attachments.append(
+                    {
+                        "id": f"attachment_{index}",
+                        "name": f"attachment_{index}",
+                        "size": 0,
+                        "kind": "file",
+                        "extension": "",
+                        "media_type": "",
+                        "transfer": "metadata_only",
+                    }
+                )
+                continue
+            display_attachments.append(
+                {
+                    "id": str(attachment.get("id") or f"attachment_{index}"),
+                    "name": str(attachment.get("name") or attachment.get("filename") or f"attachment_{index}"),
+                    "size": self._safe_attachment_size(attachment.get("size")),
+                    "kind": str(attachment.get("type") or attachment.get("kind") or "file"),
+                    "extension": str(attachment.get("extension") or ""),
+                    "media_type": str(
+                        attachment.get("media_type")
+                        or attachment.get("content_type")
+                        or attachment.get("mime_type")
+                        or ""
+                    ),
+                    "transfer": str(attachment.get("transfer") or "metadata_only"),
+                }
+            )
+        return {
+            "display_text": message.strip() or "Please analyze the attached file(s).",
+            "attachments": display_attachments,
+        }
+
+    @staticmethod
+    def _safe_attachment_size(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
 
     def _chat_payload(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {

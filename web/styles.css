@@ -66,10 +66,15 @@ button:disabled {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  overflow: hidden;
   padding: 18px 12px;
   border-right: 1px solid var(--line);
   background: var(--surface);
@@ -77,22 +82,26 @@ button:disabled {
 
 .brand {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-  padding: 0 6px 8px;
+  gap: 10px;
+  padding: 0 6px 10px;
 }
 
-.mark {
+.logo-frame {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 20px;
-  font-weight: 700;
+  width: min(230px, 100%);
+  aspect-ratio: 3.5 / 1;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.brand-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .brand h1 {
@@ -326,47 +335,10 @@ textarea:focus {
 .chat {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 100vh;
   background: var(--page);
-}
-
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  border-bottom: 1px solid var(--line);
-  padding: 14px max(24px, calc((100vw - 300px - var(--thread-width)) / 2));
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(10px);
-}
-
-.chat-header div {
-  min-width: 0;
-}
-
-.chat-header span {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.chat-header h2 {
-  margin: 2px 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.chat-header button {
-  min-height: 34px;
-  padding: 0 12px;
-  white-space: nowrap;
 }
 
 .share-bar {
@@ -848,23 +820,22 @@ textarea:focus {
   color: var(--danger);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .shell {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
+    position: relative;
+    height: auto;
+    max-height: none;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
 
   .chat {
     min-height: calc(100vh - 300px);
-  }
-
-  .chat-header {
-    padding-right: 18px;
-    padding-left: 18px;
   }
 
   .messages {
@@ -880,7 +851,7 @@ textarea:focus {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .sidebar {
     padding: 18px;
   }

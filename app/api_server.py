@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -51,6 +52,67 @@ app = FastAPI(
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
+
+ATTACHMENT_HEADER_RE = re.compile(
+    r"\[Attachment\s+(?P<index>\d+):\s+(?P<name>.*?),\s+extension=(?P<extension>.*?),\s+media_type=(?P<media_type>.*?),\s+source=(?P<source>[^\]]*)\]",
+    re.IGNORECASE,
+)
+
+
+def _message_display_text(message: Any) -> str:
+    if message.role != "user":
+        return message.text
+    display_text = str(message.metadata.get("display_text") or "").strip()
+    if display_text:
+        return display_text
+    marker = "\n\n[Attachment "
+    if marker in message.text:
+        return message.text.split(marker, 1)[0].strip() or "Please analyze the attached file(s)."
+    return message.text
+
+
+def _message_display_attachments(message: Any) -> List[Dict[str, Any]]:
+    if message.role != "user":
+        return []
+    metadata_attachments = message.metadata.get("attachments")
+    if isinstance(metadata_attachments, list):
+        return [item for item in metadata_attachments if isinstance(item, dict)]
+
+    attachments: List[Dict[str, Any]] = []
+    for match in ATTACHMENT_HEADER_RE.finditer(message.text or ""):
+        index = match.group("index")
+        extension = (match.group("extension") or "").strip()
+        media_type = (match.group("media_type") or "").strip()
+        attachments.append(
+            {
+                "id": f"historic_attachment_{message.id}_{index}",
+                "name": (match.group("name") or f"attachment_{index}").strip(),
+                "size": 0,
+                "kind": _kind_from_attachment_header(extension, media_type),
+                "extension": "" if extension == "unknown" else extension,
+                "media_type": "" if media_type == "unknown" else media_type,
+                "transfer": "historic_metadata",
+            }
+        )
+    return attachments
+
+
+def _kind_from_attachment_header(extension: str, media_type: str) -> str:
+    extension = extension.lower().strip()
+    media_type = media_type.lower().strip()
+    if media_type.startswith("image/") or extension in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff"}:
+        return "image"
+    if extension == ".pdf" or media_type == "application/pdf":
+        return "pdf"
+    if extension in {".csv", ".tsv", ".xlsx", ".xls"}:
+        return "spreadsheet"
+    if extension in {".docx", ".doc", ".rtf"}:
+        return "document"
+    if extension in {".pptx", ".ppt"}:
+        return "presentation"
+    if media_type.startswith("text/"):
+        return "text"
+    return "file"
 
 
 @app.on_event("startup")
@@ -161,8 +223,9 @@ async def get_session(session_id: str, limit: int = 500) -> Dict[str, Any]:
                 "id": message.id,
                 "session_id": message.session_id,
                 "role": message.role,
-                "text": message.text,
+                "text": _message_display_text(message),
                 "content": message.content,
+                "attachments": _message_display_attachments(message),
                 "created_at": message.created_at,
                 "metadata": message.metadata,
             }
