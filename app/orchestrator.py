@@ -17,10 +17,10 @@ from app.fredai_client import ChatCompletionResult, FredAIClient, FredAIClientEr
 from app.knowledge_store import KnowledgeStore
 from app.memory_manager import AgentMemoryManager, render_memory_context_block
 from app.memory_store import MemoryStore
+from app.runtime_hooks import RuntimeHookContext, RuntimeHookRegistry, build_default_hook_registry
 from app.scheduler import ScheduledJob
 from app.session_store import SessionStore, utc_now
 from app.tools import ToolContext, ToolRegistry, build_core_tool_registry
-from app.ui_events import ui_events_for_turn
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ class WorkspaceAgentOrchestrator:
         session_store: Optional[SessionStore] = None,
         memory_store: Optional[MemoryStore] = None,
         tool_registry: Optional[ToolRegistry] = None,
+        hook_registry: Optional[RuntimeHookRegistry] = None,
         fredai_client: Optional[FredAIClient] = None,
     ):
         self._config = config
@@ -96,6 +97,7 @@ class WorkspaceAgentOrchestrator:
             knowledge_store=self.knowledge_store,
             config=config,
         )
+        self.hook_registry = hook_registry or build_default_hook_registry()
         self._client = fredai_client or FredAIClient(config)
 
     async def respond(
@@ -195,11 +197,19 @@ class WorkspaceAgentOrchestrator:
         answer = (answer or "").strip() or "I received your message, but I could not generate a clear reply."
         finished_at = utc_now()
         duration_ms = int((time.perf_counter() - timer_start) * 1000)
-        ui_events = ui_events_for_turn(
-            query_text=message,
-            tool_names=tool_names,
-            attachments=attachments or [],
-            status=status,
+        ui_events = self.hook_registry.run(
+            "turn_completed",
+            RuntimeHookContext(
+                event="turn_completed",
+                workspace_id=workspace_id,
+                user_id=user_id,
+                session_id=session.id,
+                request_id=request_id,
+                status=status,
+                query_text=message,
+                tool_names=tool_names,
+                attachments=attachments or [],
+            ),
         )
 
         assistant_record = self.session_store.append_message(
@@ -533,6 +543,7 @@ Runtime architecture:
 - Use session_search when older conversation details are needed beyond the recent context window.
 - Use routine_rule for future behavior, standing preferences, scheduled work, reusable workflows, or missing tool requests.
 - Use workspace file tools only for files under WORKSPACE_AGENT_ROOT.
+- For questions about this agent's own implementation, code, API, UI, tools, memory, hooks, or documentation, inspect the local project with workspace_find_files/workspace_list_files/workspace_read_file before answering. Cite the files you used.
 - Use knowledge_ingest when the user asks to digest, index, add, or remember an attached/source document.
 - Use wiki_search/wiki_read first for conceptual process questions when curated wiki pages exist.
 - Use knowledge_search for broad source-document retrieval and knowledge_grep for exact terms, script names, metrics, field names, or IDs.

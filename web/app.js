@@ -786,44 +786,38 @@ function applyUiEvents(events) {
   }
 }
 
-function mockUiEventsForMessage(text) {
-  const query = String(text || "").toLowerCase();
-  const hasInventoryVerb = /\b(show|open|list|view|check|see|browse|display|what|which|where|how many)\b/.test(query);
-  if (!hasInventoryVerb) return [];
-  if (/\b(pending corrections?|wiki issues?|correction issues?)\b/.test(query)) {
-    return [
-      {
-        type: "open_drawer",
-        view: "knowledge",
-        section: "pending_corrections",
-        reason: "Mock UI event: knowledge correction inventory requested.",
-        source: "mock_ui_event_router",
-      },
-    ];
-  }
-  if (/\b(wiki pages?|glossary|curated wiki)\b/.test(query)) {
-    return [
-      {
-        type: "open_drawer",
-        view: "knowledge",
-        section: "wiki_pages",
-        reason: "Mock UI event: wiki inventory requested.",
-        source: "mock_ui_event_router",
-      },
-    ];
-  }
-  if (/\b(knowledge source|knowledge sources|knowledge base|knowledge inventory|source documents?|indexed documents?|documentation indexed|uploaded documents?|documentation folder|document library|my sources?)\b/.test(query) || /\b(what|which)\s+sources?\s+do\s+you\s+have\b/.test(query)) {
-    return [
-      {
-        type: "open_drawer",
-        view: "knowledge",
-        section: "documents",
-        reason: "Mock UI event: knowledge source inventory requested.",
-        source: "mock_ui_event_router",
-      },
-    ];
-  }
-  return [];
+const KNOWLEDGE_TOOL_DRAWER_SECTIONS = {
+  knowledge_ingest: "documents",
+  knowledge_search: "documents",
+  knowledge_grep: "documents",
+  knowledge_read: "documents",
+  wiki_search: "wiki_pages",
+  wiki_read: "wiki_pages",
+  wiki_write: "wiki_pages",
+  wiki_issue: "pending_corrections",
+};
+
+function uiEventsFromToolNames(toolNames) {
+  const names = Array.isArray(toolNames) ? toolNames : [];
+  const matched = names.filter((name) => KNOWLEDGE_TOOL_DRAWER_SECTIONS[name]);
+  if (!matched.length) return [];
+  const sections = new Set(matched.map((name) => KNOWLEDGE_TOOL_DRAWER_SECTIONS[name]));
+  const section = sections.has("pending_corrections")
+    ? "pending_corrections"
+    : sections.has("wiki_pages")
+      ? "wiki_pages"
+      : "documents";
+  return [
+    {
+      type: "open_drawer",
+      view: "knowledge",
+      section,
+      reason: `Knowledge hook opened because these tools ran: ${matched.join(", ")}.`,
+      source: "mock_runtime_hook:knowledge_drawer_on_tool_use",
+      matched_tools: matched,
+      tool_names: names,
+    },
+  ];
 }
 
 function mockKnowledgePayload() {
@@ -1283,6 +1277,37 @@ function shouldRenderMathToken(token) {
   return /[\\^_=+\-*/<>]|[A-Za-z]\s*\(/.test(formula);
 }
 
+const KATEX_JS_PATH = "/static/vendor/katex/katex.min.js";
+const KATEX_CSS_PATH = "/static/vendor/katex/katex.min.css";
+let katexLoadPromise = null;
+
+async function loadKatexAssets() {
+  if (window.katex) return true;
+  if (katexLoadPromise) return katexLoadPromise;
+
+  katexLoadPromise = fetch(KATEX_JS_PATH, { method: "HEAD" })
+    .then((response) => {
+      if (!response.ok) return false;
+      if (!document.querySelector(`link[href="${KATEX_CSS_PATH}"]`)) {
+        const style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = KATEX_CSS_PATH;
+        document.head.appendChild(style);
+      }
+      return new Promise((resolve) => {
+        const script = document.createElement("script");
+        script.src = KATEX_JS_PATH;
+        script.defer = true;
+        script.onload = () => resolve(Boolean(window.katex));
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
+    })
+    .catch(() => false);
+
+  return katexLoadPromise;
+}
+
 function readMathArgument(source, startIndex) {
   let index = startIndex;
   while (source[index] === " ") index += 1;
@@ -1306,7 +1331,21 @@ function renderMathFormula(value, display = false) {
   const node = document.createElement(display ? "div" : "span");
   node.className = display ? "math-block" : "math-inline";
   node.setAttribute("aria-label", `Formula: ${formula}`);
-  appendMathParts(node, formula);
+  if (window.katex?.render) {
+    try {
+      window.katex.render(formula, node, {
+        displayMode: display,
+        throwOnError: false,
+        strict: "ignore",
+        trust: false,
+      });
+      return node;
+    } catch (error) {
+      console.warn("KaTeX render failed; falling back to text formula.", error);
+    }
+  }
+  node.classList.add("math-fallback");
+  node.textContent = display ? formula : `$${formula}$`;
   return node;
 }
 
@@ -2047,7 +2086,7 @@ async function runAssistantRequest(userMessage, options = {}) {
   try {
     if (MOCK_MODE) {
       await completeMockAssistantResponse(userMessage, assistantMessage);
-      pendingUiEvents = mockUiEventsForMessage(userMessage.text);
+      pendingUiEvents = uiEventsFromToolNames(assistantMessage.meta?.toolNames || []);
       assistantMessage.meta = {
         ...(assistantMessage.meta || {}),
         uiEvents: pendingUiEvents,
@@ -2174,7 +2213,9 @@ async function completeMockAssistantResponse(userMessage, assistantMessage) {
   assistantMessage.meta = {
     requestId: state.lastRequestId,
     durationMs: Math.round(performance.now() - started),
-    toolNames: ["mock_memory_router", "mock_file_router", "mock_trace_writer"],
+    toolNames: attachments.length
+      ? ["knowledge_ingest", "mock_trace_writer"]
+      : ["mock_memory_router", "mock_file_router", "mock_trace_writer"],
     progressMessages: [
       "Mock mode enabled by ?mock=1.",
       "Skipped /agent/respond so FredAI credentials are not needed.",
@@ -2773,6 +2814,9 @@ async function initializeApp() {
   el.userId.value = SHARED_USER_ID;
   autoResizeInput();
   render({ forceScroll: true });
+  loadKatexAssets().then((loaded) => {
+    if (loaded) render({ preserveScroll: true });
+  });
   await refreshHealth();
   await refreshThreads();
 

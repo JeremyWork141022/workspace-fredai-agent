@@ -802,21 +802,16 @@ textarea:focus {
 }
 
 .math-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  display: inline;
   max-width: 100%;
   border-radius: 5px;
   background: var(--surface);
   padding: 1px 5px;
   vertical-align: middle;
-  white-space: nowrap;
 }
 
 .math-block {
-  display: flex;
-  align-items: center;
-  gap: 3px;
+  display: block;
   max-width: 100%;
   margin: 0 0 12px;
   overflow-x: auto;
@@ -828,28 +823,8 @@ textarea:focus {
   line-height: 1.4;
 }
 
-.math-frac {
-  display: inline-grid;
-  grid-template-rows: auto auto;
-  align-items: center;
-  margin: 0 3px;
-  text-align: center;
-  vertical-align: middle;
-}
-
-.math-frac-num {
-  border-bottom: 1px solid currentColor;
-  padding: 0 4px 1px;
-}
-
-.math-frac-den {
-  padding: 1px 4px 0;
-}
-
-.math-root {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
+.math-fallback {
+  white-space: pre-wrap;
 }
 
 .markdown-table-wrap {

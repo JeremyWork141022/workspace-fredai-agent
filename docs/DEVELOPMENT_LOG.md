@@ -3,7 +3,168 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Runtime Hook Infrastructure For Drawer Events And Self-Inspection
+
+### User Questions
+
+- The previous drawer trigger was too narrow because it depended on the user
+  asking knowledge/source/wiki/correction inventory questions.
+- The requested behavior is: when any knowledge-source-related tool runs, open
+  the drawer automatically.
+- Delete the old query-only drawer trigger.
+- Establish the overall hook infrastructure for the agent.
+- Research Claude Code, Codex, and OpenClaw hook/self-knowledge architecture
+  patterns.
+- Make the agent better at answering questions about its own code and
+  documentation by inspecting the project instead of guessing.
+- Use professional math rendering if allowed on the work computer, and remove
+  the prior bad custom formula display overlays.
+
+### Research Notes
+
+- Claude Code documents lifecycle hooks around events such as tool use. The
+  useful architectural idea is event plus matcher plus handler, especially a
+  post-tool-use style hook for side effects after a tool has actually run.
+- Codex documents lifecycle hooks loaded from `hooks.json` or inline config
+  tables, with trust boundaries for project-local hooks. Codex also treats
+  durable repo guidance (`AGENTS.md`), skills, MCP tools, and hooks as separate
+  surfaces. The relevant lesson for this project is to keep operating rules,
+  tools, and runtime hooks separate instead of hiding UI behavior inside model
+  prompt text.
+- OpenClaw's local source and docs show a broader version of the same pattern:
+  plugin hook registries, composed live hook registries, before/after tool-call
+  hooks, message hooks, and lifecycle hooks. The relevant lesson is that hook
+  dispatch should be ordered, explicit, and event-based.
+
+Local source references inspected:
+
+- Claude Code Hooks: `https://docs.claude.com/en/docs/claude-code/hooks`
+- Codex manual: `C:\Users\Jeremy\AppData\Local\Temp\openai-docs-cache\codex-manual.md`
+- OpenClaw: `openclaw-research/docs/concepts/agent-loop.md`
+- OpenClaw: `openclaw-research/docs/plugins/hooks.md`
+- OpenClaw: `openclaw-research/src/plugins/hook-registry.types.ts`
+- OpenClaw: `openclaw-research/src/plugins/hook-runner-global-state.ts`
+
+### Implemented Hook Infrastructure
+
+- Added `app/runtime_hooks.py`.
+- Added:
+  - `RuntimeHook`,
+  - `RuntimeHookContext`,
+  - `RuntimeHookRegistry`,
+  - `build_default_hook_registry()`.
+- The orchestrator now owns `self.hook_registry`.
+- At the end of every `/agent/respond` turn, the orchestrator fires:
+
+```text
+event = "turn_completed"
+```
+
+- The hook receives:
+  - `workspace_id`,
+  - `user_id`,
+  - `session_id`,
+  - `request_id`,
+  - `status`,
+  - original `query_text`,
+  - executed `tool_names`,
+  - attachments.
+- The default hook is:
+
+```text
+knowledge_drawer_on_tool_use
+```
+
+- It opens the Knowledge drawer only when one of these tools actually ran:
+  - `knowledge_ingest`,
+  - `knowledge_search`,
+  - `knowledge_grep`,
+  - `knowledge_read`,
+  - `wiki_search`,
+  - `wiki_read`,
+  - `wiki_write`,
+  - `wiki_issue`.
+
+### Drawer Section Routing
+
+The hook maps tools to drawer sections:
+
+- `knowledge_ingest`, `knowledge_search`, `knowledge_grep`, `knowledge_read`
+  -> `documents`
+- `wiki_search`, `wiki_read`, `wiki_write`
+  -> `wiki_pages`
+- `wiki_issue`
+  -> `pending_corrections`
+
+If multiple knowledge tools run, the section priority is:
+
+1. `pending_corrections`
+2. `wiki_pages`
+3. `documents`
+
+This means a correction issue opens the pending-corrections section even if the
+agent also searched source documents during the same turn.
+
+### Removed / Superseded Logic
+
+- Removed the backend query-text router from `app/ui_events.py`.
+- Deleted `app/ui_events.py`.
+- Removed the frontend mock keyword matcher.
+- Mock mode now mirrors the hook principle by deriving UI events from mock
+  `toolNames`, not from user wording.
+
+### Self-Inspection Behavior
+
+- Added a runtime instruction to the system prompt:
+  for questions about this agent's own implementation, code, API, UI, tools,
+  memory, hooks, configuration, or documentation, the agent must inspect the
+  local project using workspace file tools before answering.
+- Added the same durable rule to `.runtime/memories/MEMORY.md`.
+- The intended tool path is:
+  - `workspace_find_files` to locate likely files,
+  - `workspace_list_files` to inspect folders,
+  - `workspace_read_file` to read implementation or documentation,
+  - answer with file citations.
+
+### Math Rendering
+
+- The previous UI formula renderer attempted to draw fractions, roots, and
+  superscripts with custom DOM/CSS. That was removed from the active rendering
+  path because it produced poor visual output.
+- The UI now tries to load local KaTeX assets:
+  - `/static/vendor/katex/katex.min.js`
+  - `/static/vendor/katex/katex.min.css`
+- If KaTeX is available, formulas are rendered by KaTeX.
+- If KaTeX is not available, formulas remain visible as plain formula text.
+- This avoids npm install, CDN dependency, or runtime failure on the work
+  computer.
+
+How to check whether KaTeX is allowed on the work computer:
+
+1. Ask IT whether internally vendored JavaScript/CSS libraries are allowed in
+   the project folder.
+2. If allowed, download/copy `katex.min.js` and `katex.min.css` from the
+   approved KaTeX distribution into:
+
+```text
+web/vendor/katex/
+```
+
+3. Start the app and open the browser developer console.
+4. Run:
+
+```javascript
+Boolean(window.katex && window.katex.render)
+```
+
+5. `true` means KaTeX loaded. `false` means the UI is using plain formula text
+   fallback.
+
 ## 2026-06-30 - Backend UI Events For Knowledge Drawer Auto-Open
+
+Superseded by `2026-06-30 - Runtime Hook Infrastructure For Drawer Events And
+Self-Inspection`. The active behavior is now hook-based on executed tool names,
+not query-text inventory matching.
 
 ### User Questions
 
