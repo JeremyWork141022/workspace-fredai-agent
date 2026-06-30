@@ -3,6 +3,48 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Scroll Follow, Runtime Indicator, And Issue-Only Correction Policy
+
+### Request
+
+Improve the chat experience during long responses, remove brittle keyword-based
+knowledge drawer auto-open behavior, and clarify that missing/incorrect
+knowledge should be logged for review instead of automatically converted into
+wiki corrections.
+
+### Changes
+
+- Removed the frontend keyword trigger that opened the Knowledge Base drawer
+  based on guessed user wording.
+- Added bottom-follow behavior while the assistant is responding.
+- Stopped bottom-follow automatically when the user scrolls upward during a
+  response.
+- Changed the floating latest-message button into a compact down-arrow button
+  placed directly above the composer.
+- Added a small runtime status indicator near the chat box:
+  - animated dots while the agent is thinking,
+  - green dot when the agent is ready.
+- Updated `MEMORY.md`:
+  - undefined source terms should create/log concise `wiki_issue` items,
+  - `wiki_write` should not create corrections/glossary pages unless the user
+    explicitly asks after review,
+  - answers should be concise unless detail is requested.
+- Updated runtime system instructions in `app/orchestrator.py` to match the
+  issue-only correction policy.
+
+### Design Notes
+
+- The previous drawer auto-open was frontend-only text matching. It was brittle
+  because the browser guessed intent before FredAI actually chose tools.
+- Better future behavior is tool-event driven: the backend should return
+  structured UI events such as `open_panel=knowledge` when tools like
+  `knowledge_search`, `wiki_search`, `wiki_issue`, or `knowledge_ingest` run.
+  The UI can then open the relevant drawer because the runtime actually used
+  that subsystem, not because a regex matched the user's wording.
+- `wiki_issue` should be understood as the issue log / review queue.
+  `wiki_write` should be understood as the tool that creates or updates the
+  curated wiki layer after review.
+
 ## 2026-06-30 - Readable Markdown Chat Rendering
 
 ### Request

@@ -526,10 +526,11 @@ Runtime architecture:
 - After knowledge_search or knowledge_grep, call knowledge_read before giving factual answers from source documents.
 - For what-is/define/explain questions, follow knowledge_gap tool guidance. If source evidence only mentions or lists the term, say the indexed documentation does not define it instead of giving a circular answer.
 - Cite document titles, source paths, sections, and chunk indexes in user-facing answers when source memory is used.
-- Keep raw source documents stable. Use wiki_write only after reading source evidence or when the user explicitly supplies a correction; keep source_refs/chunk_refs.
-- Use wiki_issue when a user reports wrong, missing, contradictory, or stale wiki/process knowledge. Treat wiki pages/issues as the supplement and correction layer above source documents.
+- Keep raw source documents stable. Use wiki_issue to log wrong, missing, contradictory, stale, or undefined process knowledge for later review.
+- Do not use wiki_write to create or revise wiki corrections/glossary pages unless the user explicitly asks for that after review; keep source_refs/chunk_refs when writing is approved.
 - Do not claim storage or scheduling succeeded unless a tool result confirms it.
 - Do not expose tool JSON unless the user asks for implementation-level details.
+- Be concise by default unless the user asks for detail, a plan, implementation explanation, or another deliberate long-form response.
 """.strip()
         )
         return "\n\n".join(parts)

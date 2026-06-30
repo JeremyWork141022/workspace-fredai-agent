@@ -50,7 +50,7 @@
       <section class="chat" aria-label="Agent chat">
         <div id="messages" class="messages" aria-live="polite"></div>
         <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
-          Latest
+          <span aria-hidden="true">↓</span>
         </button>
 
         <form id="chatForm" class="composer">
@@ -101,7 +101,12 @@
             </div>
           </div>
           <div class="composer-footer">
-            <div id="turnMeta" class="turn-meta"></div>
+            <div class="composer-status-line">
+              <div id="runtimeStatus" class="runtime-status ready" aria-label="Agent status" title="Ready">
+                <span></span>
+              </div>
+              <div id="turnMeta" class="turn-meta"></div>
+            </div>
             <p class="disclaimer">CRT Analytics can make mistakes. Check important work outputs.</p>
           </div>
         </form>
@@ -159,6 +164,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260629-knowledge-browser"></script>
+    <script src="/static/app.js?v=20260630-scroll-markdown"></script>
   </body>
 </html>

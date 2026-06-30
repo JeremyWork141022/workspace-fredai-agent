@@ -63,6 +63,8 @@ const state = {
   selectedShareIds: new Set(),
   activeShareRange: null,
   feedbackEditorMessageId: "",
+  autoFollowLatest: true,
+  suppressScrollHandlerUntil: 0,
   knowledge: {
     open: false,
     loading: false,
@@ -106,6 +108,7 @@ const el = {
   sendButton: document.querySelector("#sendButton"),
   stopButton: document.querySelector("#stopButton"),
   turnMeta: document.querySelector("#turnMeta"),
+  runtimeStatus: document.querySelector("#runtimeStatus"),
   newSessionButton: document.querySelector("#newSessionButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
   knowledgePanel: document.querySelector("#knowledgePanel"),
@@ -315,12 +318,15 @@ function isNearBottom() {
 }
 
 function scrollToBottom(behavior = "auto") {
+  state.suppressScrollHandlerUntil = Date.now() + 350;
   el.messages.scrollTo({ top: el.messages.scrollHeight, behavior });
   updateScrollButton();
 }
 
 function updateScrollButton() {
-  el.scrollToBottomButton.classList.toggle("hidden", isNearBottom());
+  const nearBottom = isNearBottom();
+  el.scrollToBottomButton.classList.toggle("hidden", nearBottom);
+  if (nearBottom) state.autoFollowLatest = true;
 }
 
 function autoResizeInput() {
@@ -338,20 +344,15 @@ function updateComposerControls() {
   el.copySessionButton.disabled = !state.sessionId;
   el.stopButton.classList.toggle("hidden", !state.busy);
   el.sendButton.classList.toggle("hidden", state.busy);
+  updateRuntimeStatus();
 }
 
-function isKnowledgeIntent(text) {
-  const value = String(text || "").toLowerCase();
-  if (!value.trim()) return false;
-  const patterns = [
-    /\bshow\b.*\bknowledge\s*base\b/,
-    /\bopen\b.*\bknowledge\s*base\b/,
-    /\bknowledge\s*base\b.*\b(include|contain|have|list|show|open|document|file|source|wiki)\b/,
-    /\bwhat\b.*\b(indexed|uploaded|ingested|stored)\b/,
-    /\b(documentation|document|source)\s*(folder|library|inventory)\b/,
-    /\bwiki\s*(pages?|issues?|corrections?)\b/,
-  ];
-  return patterns.some((pattern) => pattern.test(value));
+function updateRuntimeStatus() {
+  if (!el.runtimeStatus) return;
+  el.runtimeStatus.classList.toggle("thinking", state.busy);
+  el.runtimeStatus.classList.toggle("ready", !state.busy);
+  el.runtimeStatus.title = state.busy ? "Thinking" : "Ready";
+  el.runtimeStatus.setAttribute("aria-label", state.busy ? "Agent thinking" : "Agent ready");
 }
 
 function buildThinkingSteps(userMessage) {
@@ -359,7 +360,7 @@ function buildThinkingSteps(userMessage) {
   if (userMessage.attachments?.length) {
     steps.push("Preparing attached file context.");
   }
-  if (isKnowledgeIntent(userMessage.text) || /\b(eva|macs|crt|prm|methodology|user guide|workflow)\b/i.test(userMessage.text || "")) {
+  if (/\b(eva|macs|crt|prm|methodology|user guide|workflow|knowledge|wiki|source|document)\b/i.test(userMessage.text || "")) {
     steps.push("Checking whether knowledge base or wiki tools are needed.");
   }
   steps.push("Waiting for FredAI to choose tools or answer.");
@@ -384,12 +385,14 @@ function startThinkingProgress(assistantMessage, userMessage) {
         `Still thinking (${elapsed}s). FredAI may be reading sources or running tools.`,
       ];
     }
-    render({ preserveScroll: true });
+    render({ followLatest: true });
   }, 2200);
 }
 
 function render(options = {}) {
-  const shouldPin = !options.preserveScroll && (options.forceScroll || isNearBottom());
+  const shouldPin = options.followLatest
+    ? state.autoFollowLatest
+    : !options.preserveScroll && (options.forceScroll || isNearBottom());
   renderThreads();
   renderMessages();
   renderAttachments();
@@ -1631,6 +1634,17 @@ function scrollToSharedRange() {
   });
 }
 
+function handleMessagesScroll() {
+  if (Date.now() > state.suppressScrollHandlerUntil) {
+    if (state.busy && !isNearBottom()) {
+      state.autoFollowLatest = false;
+    } else if (isNearBottom()) {
+      state.autoFollowLatest = true;
+    }
+  }
+  updateScrollButton();
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   await sendCurrentComposer();
@@ -1647,10 +1661,10 @@ async function sendCurrentComposer() {
 
   const displayAttachments = state.attachments.map(toDisplayAttachment);
   const payloadAttachments = state.attachments.map(toPayloadAttachment);
-  const shouldOpenKnowledge = isKnowledgeIntent(message) && displayAttachments.length === 0;
   state.attachments = [];
   state.selectedShareIds.clear();
   state.activeShareRange = null;
+  state.autoFollowLatest = true;
   el.messageInput.value = "";
   autoResizeInput();
 
@@ -1666,7 +1680,6 @@ async function sendCurrentComposer() {
   };
 
   state.messages.push(userMessage);
-  if (shouldOpenKnowledge) openKnowledgePanel();
   await runAssistantRequest(userMessage, { forceScroll: true });
 }
 
@@ -1755,7 +1768,7 @@ async function runAssistantRequest(userMessage, options = {}) {
     await refreshThreads();
     setTurnMeta("");
     if (state.sessionId) replaceThreadUrl(state.sessionId);
-    render({ forceScroll: true });
+    render(state.autoFollowLatest ? { forceScroll: true } : { preserveScroll: true });
     el.messageInput.focus();
   }
 }
@@ -2325,8 +2338,11 @@ el.threadList.addEventListener("click", handleThreadListClick);
 el.threadList.addEventListener("input", handleThreadListInput);
 el.threadList.addEventListener("keydown", handleThreadListKeydown);
 el.threadList.addEventListener("focusout", handleThreadListFocusout);
-el.scrollToBottomButton.addEventListener("click", () => scrollToBottom("smooth"));
-el.messages.addEventListener("scroll", updateScrollButton);
+el.scrollToBottomButton.addEventListener("click", () => {
+  state.autoFollowLatest = true;
+  scrollToBottom("smooth");
+});
+el.messages.addEventListener("scroll", handleMessagesScroll);
 el.messages.addEventListener("click", handleMessageClick);
 el.attachmentList.addEventListener("click", handleAttachmentClick);
 el.attachButton.addEventListener("click", () => el.fileInput.click());
