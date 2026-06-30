@@ -3,6 +3,31 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Readable Markdown Chat Rendering
+
+### Request
+
+Make agent responses readable in the browser instead of displaying raw Markdown
+syntax such as `**bold**`, inline backticks, and pipe tables.
+
+### Changes
+
+- Extended the browser Markdown renderer in `web/app.js` to support:
+  - bold text with `**text**` and `__text__`,
+  - inline code with backticks,
+  - safe links,
+  - horizontal rules,
+  - Markdown pipe tables.
+- Updated `web/styles.css` so rendered tables, inline code, links, and dividers
+  are readable inside assistant messages.
+
+### Design Notes
+
+- The renderer still uses DOM nodes and `textContent` for parsed text, not raw
+  HTML injection.
+- This keeps the project package-light for the work-computer environment while
+  covering the Markdown patterns the agent commonly returns.
+
 ## 2026-06-29 - Message Red Flag Review Trail
 
 ### Request

@@ -1103,7 +1103,112 @@ function renderMarkdown(container, text) {
     codeLines = [];
   };
 
-  for (const rawLine of lines) {
+  const appendInlineMarkdown = (node, value) => {
+    const source = String(value || "");
+    const tokenPattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\))/g;
+    let lastIndex = 0;
+    let match;
+
+    const appendText = (textValue) => {
+      if (textValue) node.appendChild(document.createTextNode(textValue));
+    };
+
+    while ((match = tokenPattern.exec(source)) !== null) {
+      appendText(source.slice(lastIndex, match.index));
+      const token = match[0];
+
+      if (token.startsWith("`") && token.endsWith("`")) {
+        const code = document.createElement("code");
+        code.textContent = token.slice(1, -1);
+        node.appendChild(code);
+      } else if (
+        (token.startsWith("**") && token.endsWith("**")) ||
+        (token.startsWith("__") && token.endsWith("__"))
+      ) {
+        const strong = document.createElement("strong");
+        strong.textContent = token.slice(2, -2);
+        node.appendChild(strong);
+      } else {
+        const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (linkMatch) {
+          const href = linkMatch[2].trim();
+          const isSafeHref = /^(https?:|mailto:|#|\/)/i.test(href);
+          if (isSafeHref) {
+            const link = document.createElement("a");
+            link.textContent = linkMatch[1];
+            link.href = href;
+            link.rel = "noreferrer";
+            if (/^https?:/i.test(href)) link.target = "_blank";
+            node.appendChild(link);
+          } else {
+            appendText(token);
+          }
+        } else {
+          appendText(token);
+        }
+      }
+      lastIndex = match.index + token.length;
+    }
+    appendText(source.slice(lastIndex));
+  };
+
+  const splitTableRow = (line) => {
+    let trimmed = line.trim();
+    if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+    if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+    return trimmed.split("|").map((cell) => cell.trim());
+  };
+
+  const isTableDivider = (line) => {
+    const cells = splitTableRow(line);
+    return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  };
+
+  const isTableRow = (line) => line.includes("|") && splitTableRow(line).length > 1;
+
+  const renderTable = (startIndex) => {
+    const headerCells = splitTableRow(lines[startIndex]);
+    const rowLines = [];
+    let index = startIndex + 2;
+
+    while (index < lines.length && lines[index].trim() && isTableRow(lines[index])) {
+      rowLines.push(lines[index]);
+      index += 1;
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "markdown-table-wrap";
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    for (const cell of headerCells) {
+      const th = document.createElement("th");
+      appendInlineMarkdown(th, cell);
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement("tbody");
+    for (const rowLine of rowLines) {
+      const row = document.createElement("tr");
+      const cells = splitTableRow(rowLine);
+      for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+        const td = document.createElement("td");
+        appendInlineMarkdown(td, cells[cellIndex] || "");
+        row.appendChild(td);
+      }
+      tbody.appendChild(row);
+    }
+
+    table.append(thead, tbody);
+    wrapper.appendChild(table);
+    container.appendChild(wrapper);
+    return index;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.replace(/\s+$/, "");
 
     if (line.trim().startsWith("```")) {
@@ -1128,12 +1233,24 @@ function renderMarkdown(container, text) {
       continue;
     }
 
+    if (index + 1 < lines.length && isTableRow(line) && isTableDivider(lines[index + 1])) {
+      closeList();
+      index = renderTable(index) - 1;
+      continue;
+    }
+
+    if (/^\s*-{3,}\s*$/.test(line)) {
+      closeList();
+      container.appendChild(document.createElement("hr"));
+      continue;
+    }
+
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     if (heading) {
       closeList();
       const level = String(Math.min(heading[1].length + 2, 5));
       const node = document.createElement(`h${level}`);
-      node.textContent = heading[2];
+      appendInlineMarkdown(node, heading[2]);
       container.appendChild(node);
       continue;
     }
@@ -1145,7 +1262,7 @@ function renderMarkdown(container, text) {
         list = document.createElement("ul");
       }
       const li = document.createElement("li");
-      li.textContent = bullet[1];
+      appendInlineMarkdown(li, bullet[1]);
       list.appendChild(li);
       continue;
     }
@@ -1157,14 +1274,14 @@ function renderMarkdown(container, text) {
         list = document.createElement("ol");
       }
       const li = document.createElement("li");
-      li.textContent = ordered[1];
+      appendInlineMarkdown(li, ordered[1]);
       list.appendChild(li);
       continue;
     }
 
     closeList();
     const paragraph = document.createElement("p");
-    paragraph.textContent = line;
+    appendInlineMarkdown(paragraph, line);
     container.appendChild(paragraph);
   }
 

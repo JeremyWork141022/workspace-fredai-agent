@@ -695,6 +695,7 @@ textarea:focus {
 .message-content ul:last-child,
 .message-content ol:last-child,
 .message-content pre:last-child,
+.message-content .markdown-table-wrap:last-child,
 .message-content h3:last-child,
 .message-content h4:last-child,
 .message-content h5:last-child {
@@ -718,6 +719,65 @@ textarea:focus {
 .message-content code {
   font-family: Consolas, "Courier New", monospace;
   font-size: 13px;
+}
+
+.message-content p code,
+.message-content li code,
+.message-content td code,
+.message-content th code {
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 1px 5px;
+}
+
+.message-content a {
+  color: var(--accent-dark);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.message-content a:hover {
+  text-decoration: underline;
+}
+
+.message-content hr {
+  width: 100%;
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.markdown-table-wrap {
+  max-width: 100%;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.markdown-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.markdown-table-wrap th,
+.markdown-table-wrap td {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table-wrap th {
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.markdown-table-wrap tr:last-child td {
+  border-bottom: 0;
 }
 
 .typing-indicator {
