@@ -112,58 +112,68 @@
         </form>
       </section>
 
-      <section id="knowledgePanel" class="knowledge-panel hidden" aria-label="Knowledge base browser">
-        <header class="knowledge-header">
+      <aside id="drawerPanel" class="drawer-panel hidden" aria-label="Workspace drawer">
+        <header class="drawer-header">
           <div>
-            <h2>Knowledge Base</h2>
-            <p>Source documents stay raw. Corrections and clarifications belong in the wiki layer.</p>
+            <p id="drawerKind" class="drawer-kind">Knowledge</p>
+            <h2 id="drawerTitle">Knowledge Base</h2>
+            <p id="drawerDescription">Source documents stay raw. Corrections and clarifications belong in the wiki layer.</p>
           </div>
-          <button id="knowledgeCloseButton" type="button">Close</button>
+          <button id="drawerCloseButton" type="button">Close</button>
         </header>
 
-        <form id="knowledgeForm" class="knowledge-form">
-          <div class="knowledge-form-header">
-            <h3 id="knowledgeFormTitle">Upload Source Document</h3>
-            <button id="knowledgeCancelReplaceButton" class="hidden" type="button">Cancel Replace</button>
+        <div id="drawerBody" class="drawer-body" data-drawer-view="knowledge">
+          <section id="knowledgeView" class="drawer-view knowledge-view" aria-label="Knowledge base browser">
+            <form id="knowledgeForm" class="knowledge-form">
+              <div class="knowledge-form-header">
+                <h3 id="knowledgeFormTitle">Upload Source Document</h3>
+                <button id="knowledgeCancelReplaceButton" class="hidden" type="button">Cancel Replace</button>
+              </div>
+              <p class="knowledge-form-note">
+                Add the source file. The agent indexes the text and infers process, document type, tags, and version hints for the wiki layer.
+              </p>
+              <label>
+                File
+                <input
+                  id="knowledgeFileInput"
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tif,.tiff,.csv,.tsv,.xlsx,.docx,.pptx,.rtf,.txt,.md,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.log,.html,.htm,.sql"
+                />
+              </label>
+              <button id="knowledgeUploadButton" class="primary-button" type="submit">Upload Document</button>
+            </form>
+
+            <div class="knowledge-toolbar">
+              <button id="knowledgeRefreshButton" type="button">Refresh</button>
+              <span id="knowledgeStatus"></span>
+            </div>
+
+            <div id="knowledgeTagFilters" class="knowledge-tags" aria-label="Knowledge tag filters"></div>
+
+            <div class="knowledge-section">
+              <h3>Documentation Folder</h3>
+              <div id="knowledgeDocs" class="knowledge-list"></div>
+            </div>
+
+            <div class="knowledge-section">
+              <h3>Wiki Pages</h3>
+              <div id="knowledgeWiki" class="knowledge-list compact"></div>
+            </div>
+
+            <div class="knowledge-section">
+              <h3>Pending Corrections</h3>
+              <div id="knowledgeIssues" class="knowledge-list compact"></div>
+            </div>
+          </section>
+
+          <div id="drawerEmpty" class="drawer-empty hidden">
+            <h2>Drawer Ready</h2>
+            <p>This shell can host future file explorer, schedule, planner, and tool-dashboard views.</p>
           </div>
-          <p class="knowledge-form-note">
-            Add the source file. The agent indexes the text and infers process, document type, tags, and version hints for the wiki layer.
-          </p>
-          <label>
-            File
-            <input
-              id="knowledgeFileInput"
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tif,.tiff,.csv,.tsv,.xlsx,.docx,.pptx,.rtf,.txt,.md,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.log,.html,.htm,.sql"
-            />
-          </label>
-          <button id="knowledgeUploadButton" class="primary-button" type="submit">Upload Document</button>
-        </form>
-
-        <div class="knowledge-toolbar">
-          <button id="knowledgeRefreshButton" type="button">Refresh</button>
-          <span id="knowledgeStatus"></span>
         </div>
-
-        <div id="knowledgeTagFilters" class="knowledge-tags" aria-label="Knowledge tag filters"></div>
-
-        <div class="knowledge-section">
-          <h3>Documentation Folder</h3>
-          <div id="knowledgeDocs" class="knowledge-list"></div>
-        </div>
-
-        <div class="knowledge-section">
-          <h3>Wiki Pages</h3>
-          <div id="knowledgeWiki" class="knowledge-list compact"></div>
-        </div>
-
-        <div class="knowledge-section">
-          <h3>Pending Corrections</h3>
-          <div id="knowledgeIssues" class="knowledge-list compact"></div>
-        </div>
-      </section>
+      </aside>
     </main>
 
-    <script src="/static/app.js?v=20260630-scroll-markdown"></script>
+    <script src="/static/app.js?v=20260630-drawer-framework"></script>
   </body>
 </html>

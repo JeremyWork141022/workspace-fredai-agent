@@ -12,6 +12,19 @@ const NEW_THREAD_TITLE = "Ask me anything about CRT Analytics";
 const EMPTY_STATE_TITLE = "What should CRT Analytic Agent help with?";
 const EMPTY_STATE_HINT = "Ask me about CRT Analytics.";
 
+const DRAWER_VIEWS = {
+  knowledge: {
+    kind: "Knowledge",
+    title: "Knowledge Base",
+    description: "Source documents stay raw. Corrections and clarifications belong in the wiki layer.",
+  },
+  empty: {
+    kind: "Workspace",
+    title: "Drawer Ready",
+    description: "This shell can host future file explorer, schedule, planner, and tool-dashboard views.",
+  },
+};
+
 const TEXT_EXTENSIONS = new Set([
   ".txt",
   ".md",
@@ -65,8 +78,11 @@ const state = {
   feedbackEditorMessageId: "",
   autoFollowLatest: true,
   suppressScrollHandlerUntil: 0,
-  knowledge: {
+  drawer: {
     open: false,
+    view: "knowledge",
+  },
+  knowledge: {
     loading: false,
     uploading: false,
     replaceDocumentId: "",
@@ -85,6 +101,7 @@ const state = {
 };
 
 const el = {
+  shell: document.querySelector(".shell"),
   connectionStatus: document.querySelector("#connectionStatus"),
   modelName: document.querySelector("#modelName"),
   toolCount: document.querySelector("#toolCount"),
@@ -111,8 +128,14 @@ const el = {
   runtimeStatus: document.querySelector("#runtimeStatus"),
   newSessionButton: document.querySelector("#newSessionButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
-  knowledgePanel: document.querySelector("#knowledgePanel"),
-  knowledgeCloseButton: document.querySelector("#knowledgeCloseButton"),
+  drawerPanel: document.querySelector("#drawerPanel"),
+  drawerBody: document.querySelector("#drawerBody"),
+  drawerKind: document.querySelector("#drawerKind"),
+  drawerTitle: document.querySelector("#drawerTitle"),
+  drawerDescription: document.querySelector("#drawerDescription"),
+  drawerCloseButton: document.querySelector("#drawerCloseButton"),
+  knowledgeView: document.querySelector("#knowledgeView"),
+  drawerEmpty: document.querySelector("#drawerEmpty"),
   knowledgeRefreshButton: document.querySelector("#knowledgeRefreshButton"),
   knowledgeForm: document.querySelector("#knowledgeForm"),
   knowledgeFormTitle: document.querySelector("#knowledgeFormTitle"),
@@ -517,9 +540,21 @@ function setKnowledgeStatus(text, tone = "") {
   renderKnowledgePanel();
 }
 
+function renderDrawer() {
+  const view = DRAWER_VIEWS[state.drawer.view] || DRAWER_VIEWS.empty;
+  el.shell.classList.toggle("drawer-open", state.drawer.open);
+  el.drawerPanel.classList.toggle("hidden", !state.drawer.open);
+  el.drawerBody.dataset.drawerView = state.drawer.view;
+  el.drawerKind.textContent = view.kind;
+  el.drawerTitle.textContent = view.title;
+  el.drawerDescription.textContent = view.description;
+  el.knowledgeView.classList.toggle("hidden", state.drawer.view !== "knowledge");
+  el.drawerEmpty.classList.toggle("hidden", state.drawer.view === "knowledge");
+}
+
 function renderKnowledgePanel() {
-  el.knowledgePanel.classList.toggle("hidden", !state.knowledge.open);
-  el.knowledgePanel.classList.toggle("loading", state.knowledge.loading || state.knowledge.uploading);
+  renderDrawer();
+  el.drawerPanel.classList.toggle("loading", state.knowledge.loading || state.knowledge.uploading);
   el.knowledgeFormTitle.textContent = state.knowledge.replaceDocumentId
     ? "Replace Source Document"
     : "Upload Source Document";
@@ -672,15 +707,22 @@ function knowledgeEmpty(text) {
 }
 
 async function openKnowledgePanel() {
-  state.knowledge.open = true;
+  openDrawer("knowledge");
   renderKnowledgePanel();
   if (!state.knowledge.documents.length && !state.knowledge.loading) {
     await refreshKnowledgeBase();
   }
 }
 
-function closeKnowledgePanel() {
-  state.knowledge.open = false;
+function openDrawer(view = "knowledge") {
+  state.drawer.view = DRAWER_VIEWS[view] ? view : "empty";
+  state.drawer.open = true;
+  renderDrawer();
+}
+
+function closeDrawer() {
+  state.drawer.open = false;
+  state.knowledge.replaceDocumentId = "";
   renderKnowledgePanel();
 }
 
@@ -958,6 +1000,14 @@ function renderMessageActions(message) {
   copy.dataset.messageId = message.id;
   actions.appendChild(copy);
 
+  const thumbsUp = document.createElement("button");
+  thumbsUp.type = "button";
+  thumbsUp.className = "thumbs-up-action";
+  thumbsUp.textContent = "Thumbs Up";
+  thumbsUp.dataset.action = "thumbs-up-message";
+  thumbsUp.dataset.messageId = message.id;
+  actions.appendChild(thumbsUp);
+
   const flag = document.createElement("button");
   flag.type = "button";
   flag.className = "flag-action";
@@ -977,7 +1027,7 @@ function renderMessageFeedback(feedbackItems) {
   container.className = "message-feedback";
 
   const title = document.createElement("strong");
-  title.textContent = items.length === 1 ? "Review comment" : "Review comments";
+  title.textContent = items.length === 1 ? "Feedback" : "Feedback";
   container.appendChild(title);
 
   const list = document.createElement("div");
@@ -990,7 +1040,8 @@ function renderMessageFeedback(feedbackItems) {
     const meta = document.createElement("small");
     const author = item.user_id || item.userId || "shared";
     const createdAt = item.created_at || item.createdAt || "";
-    meta.textContent = [author, createdAt ? formatThreadTime(createdAt) : ""].filter(Boolean).join(" | ");
+    const label = item.label === "thumbs_up" ? "thumbs up" : item.label || "comment";
+    meta.textContent = [label, author, createdAt ? formatThreadTime(createdAt) : ""].filter(Boolean).join(" | ");
     entry.append(comment, meta);
     list.appendChild(entry);
   }
@@ -2131,6 +2182,51 @@ async function saveMessageFeedback(id) {
   }
 }
 
+async function saveMessageThumbsUp(id) {
+  const message = state.messages.find((item) => item.id === id);
+  if (!message) return;
+  const userId = el.userId.value.trim() || SHARED_USER_ID;
+  const comment = "Thumbs up";
+
+  try {
+    if (MOCK_MODE) {
+      message.feedback = [
+        ...(message.feedback || []),
+        {
+          id: createId("mock_feedback"),
+          session_id: state.sessionId,
+          message_id: getMessageShareId(message),
+          user_id: userId,
+          label: "thumbs_up",
+          comment,
+          created_at: new Date().toISOString(),
+        },
+      ];
+      persistCurrentMockThread();
+    } else {
+      const serverMessageId = Number(message.serverId);
+      if (!Number.isFinite(serverMessageId)) {
+        throw new Error("This message is not saved on the server yet. Try again after the response finishes.");
+      }
+      const res = await fetch(`/agent/messages/${encodeURIComponent(String(serverMessageId))}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, label: "thumbs_up", comment }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      message.feedback = [...(message.feedback || []), data.feedback];
+    }
+    setTurnMeta("Thumbs up saved.");
+    render({ preserveScroll: true });
+    setTimeout(() => {
+      if (!state.busy) setTurnMeta("");
+    }, 1200);
+  } catch (err) {
+    setTurnMeta(`Could not save thumbs up: ${err.message}`, "warn");
+  }
+}
+
 function newSession() {
   state.sessionId = "";
   state.lastRequestId = "";
@@ -2225,6 +2321,7 @@ function handleMessageClick(event) {
   const action = button.dataset.action;
   if (action === "toggle-share-message") toggleShareMessage(button.dataset.messageId);
   if (action === "copy-message") copyMessage(button.dataset.messageId);
+  if (action === "thumbs-up-message") saveMessageThumbsUp(button.dataset.messageId);
   if (action === "flag-message") openFeedbackEditor(button.dataset.messageId);
   if (action === "save-feedback") saveMessageFeedback(button.dataset.messageId);
   if (action === "cancel-feedback") cancelFeedbackEditor(button.dataset.messageId);
@@ -2282,7 +2379,7 @@ function handleAttachmentClick(event) {
 
 function handleKnowledgePanelClick(event) {
   const button = event.target.closest("[data-action]");
-  if (!button || !el.knowledgePanel.contains(button)) return;
+  if (!button || !el.drawerPanel.contains(button)) return;
   const action = button.dataset.action;
   if (action === "download-knowledge-document") {
     downloadKnowledgeDocument(button.dataset.documentId || "");
@@ -2329,11 +2426,11 @@ el.chatForm.addEventListener("click", handleComposerClick);
 el.stopButton.addEventListener("click", stopRequest);
 el.newSessionButton.addEventListener("click", newSession);
 el.knowledgeButton.addEventListener("click", openKnowledgePanel);
-el.knowledgeCloseButton.addEventListener("click", closeKnowledgePanel);
+el.drawerCloseButton.addEventListener("click", closeDrawer);
 el.knowledgeRefreshButton.addEventListener("click", refreshKnowledgeBase);
 el.knowledgeCancelReplaceButton.addEventListener("click", resetKnowledgeForm);
 el.knowledgeForm.addEventListener("submit", uploadKnowledgeDocument);
-el.knowledgePanel.addEventListener("click", handleKnowledgePanelClick);
+el.drawerPanel.addEventListener("click", handleKnowledgePanelClick);
 el.threadList.addEventListener("click", handleThreadListClick);
 el.threadList.addEventListener("input", handleThreadListInput);
 el.threadList.addEventListener("keydown", handleThreadListKeydown);

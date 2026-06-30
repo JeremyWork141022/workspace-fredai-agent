@@ -3,6 +3,117 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Extensible Right Drawer Framework And Positive Feedback
+
+### Request
+
+Design the full drawer UI logic, implement the Knowledge Base drawer in that
+framework, keep it extensible for other tool-related views, and add a
+thumbs-up option beside the red-flag feedback action for each chat message.
+
+### Implemented Changes
+
+- Created a reusable right-side drawer shell in `web/index.html`.
+- Moved Knowledge Base content into the drawer as the first registered drawer
+  view instead of a one-off fixed panel.
+- Updated `web/app.js` with a `DRAWER_VIEWS` registry and `state.drawer`.
+- Added generic drawer functions:
+  - `openDrawer(view)`
+  - `closeDrawer()`
+  - `renderDrawer()`
+- Kept `openKnowledgePanel()` as the Knowledge Base convenience entry point,
+  now backed by the generic drawer.
+- Changed desktop layout so opening the drawer creates a third right column:
+  left sidebar, chat, drawer.
+- Kept tablet/mobile behavior as an overlay so the chat does not become too
+  narrow.
+- Added a per-message `Thumbs Up` action.
+- Stored thumbs-up feedback through the existing durable message feedback
+  endpoint with label `thumbs_up`.
+- Updated feedback rendering so positive and red-flag feedback share one
+  review trail.
+- Fixed the scroll-to-latest button rendering through CSS so Windows text
+  encoding does not corrupt the arrow glyph.
+
+### Full Drawer Logic
+
+The drawer should be treated as a single UI container with multiple possible
+views, not as separate panels scattered through the app.
+
+1. The shell layout owns the position:
+   - left sidebar for threads,
+   - center chat,
+   - right drawer.
+2. The drawer owns only chrome:
+   - drawer kind,
+   - title,
+   - description,
+   - close control,
+   - body host.
+3. Each drawer view owns its own content:
+   - `knowledge`: documentation folder, wiki pages, pending corrections,
+     upload/replace/download controls,
+   - future `files`: file explorer and generated file outputs,
+   - future `schedule`: scheduled jobs, planner, run queue,
+   - future `tool_run`: live tool timeline and artifacts,
+   - future `process`: EVA/Macs step dashboard.
+4. The chat should remain usable while the drawer is open. On wide screens the
+   chat shrinks into the center column. On smaller screens the drawer overlays
+   because a three-column layout would be unusable.
+5. Drawer opening should ultimately be event-driven from runtime/tool behavior,
+   not guessed from user text.
+
+### Future Tool-Triggered Drawer Plan
+
+Add a backend/UI event contract to `/agent/respond`.
+
+Suggested response addition:
+
+```json
+{
+  "ui_events": [
+    {
+      "type": "open_drawer",
+      "view": "knowledge",
+      "section": "pending_corrections",
+      "reason": "wiki_issue was created"
+    }
+  ]
+}
+```
+
+Suggested mapping:
+
+- `knowledge_ingest` -> open `knowledge`, focus `documentation`.
+- `knowledge_search` / `knowledge_read` -> open `knowledge`, focus source
+  documents and cited chunks.
+- `wiki_search` / `wiki_read` -> open `knowledge`, focus wiki pages.
+- `wiki_issue` -> open `knowledge`, focus pending corrections.
+- future file tools -> open `files`.
+- future scheduler tools -> open `schedule`.
+- future EVA execution tools -> open `process` or `tool_run`.
+
+Implementation steps for the future event contract:
+
+1. Add `ui_events: List[Dict[str, Any]]` to `AgentRespondResponse`.
+2. In `WorkspaceAgentOrchestrator`, convert tool trace events into high-level
+   UI events.
+3. Return those events from `/agent/respond`.
+4. In `web/app.js`, apply events after the response:
+   - `open_drawer` calls `openDrawer(event.view)`,
+   - optional `section` scrolls/focuses within that drawer view,
+   - optional payload selects a document, issue, wiki page, or generated file.
+5. Keep frontend keyword guessing disabled.
+
+### Design Notes
+
+- The Knowledge Base drawer is implemented now. Other drawer views intentionally
+  use the same shell but are not implemented yet.
+- This keeps the UI extensible without committing to the exact file explorer,
+  schedule, or EVA execution dashboard layout before those tools exist.
+- Red Flag and Thumbs Up are both durable feedback records. Red Flag is for
+  commented review; Thumbs Up is quick positive feedback.
+
 ## 2026-06-30 - Scroll Follow, Runtime Indicator, And Issue-Only Correction Policy
 
 ### Request

@@ -65,6 +65,10 @@ button:disabled {
   min-height: 100vh;
 }
 
+.shell.drawer-open {
+  grid-template-columns: 300px minmax(360px, 1fr) minmax(360px, 520px);
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -357,42 +361,78 @@ textarea:focus {
   font-weight: 600;
 }
 
-.knowledge-panel {
-  position: fixed;
+.drawer-panel {
+  position: sticky;
   top: 0;
-  right: 0;
-  z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  width: min(520px, calc(100vw - 32px));
   height: 100vh;
+  max-height: 100vh;
+  min-width: 0;
   overflow-y: auto;
   border-left: 1px solid var(--line);
   background: var(--page);
-  box-shadow: -24px 0 60px rgba(17, 24, 39, 0.12);
   padding: 20px;
 }
 
-.knowledge-header {
+.drawer-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
 }
 
-.knowledge-header h2,
+.drawer-header h2,
 .knowledge-form h3,
 .knowledge-section h3 {
   margin: 0;
 }
 
-.knowledge-header h2 {
+.drawer-header h2 {
   font-size: 22px;
 }
 
-.knowledge-header p {
+.drawer-kind {
+  margin: 0 0 4px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.drawer-header p:not(.drawer-kind) {
   margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.drawer-body,
+.drawer-view {
+  display: grid;
+  gap: 16px;
+}
+
+.drawer-body {
+  padding-top: 16px;
+}
+
+.drawer-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 16px;
+}
+
+.drawer-empty h2,
+.drawer-empty p {
+  margin: 0;
+}
+
+.drawer-empty p {
+  margin-top: 6px;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
@@ -583,7 +623,7 @@ textarea:focus {
   flex-direction: column;
   gap: 24px;
   min-height: 0;
-  padding: 28px max(24px, calc((100vw - 300px - var(--thread-width)) / 2)) 130px;
+  padding: 28px max(24px, calc((100% - var(--thread-width)) / 2)) 130px;
   overflow-x: hidden;
   overflow-y: auto;
   scroll-behavior: smooth;
@@ -869,6 +909,15 @@ textarea:focus {
   background: var(--surface);
 }
 
+.message-actions .thumbs-up-action {
+  color: var(--accent-dark);
+}
+
+.message-actions .thumbs-up-action:hover {
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent-dark);
+}
+
 .message-actions .flag-action {
   color: #b91c1c;
 }
@@ -1030,7 +1079,7 @@ textarea:focus {
 
 .scroll-button {
   position: absolute;
-  right: max(24px, calc((100vw - 300px - var(--thread-width)) / 2));
+  right: max(24px, calc((100% - var(--thread-width)) / 2));
   bottom: 112px;
   z-index: 5;
   display: inline-flex;
@@ -1052,12 +1101,21 @@ textarea:focus {
   background: var(--surface);
 }
 
+.scroll-button span {
+  font-size: 0;
+}
+
+.scroll-button span::before {
+  content: "\\2193";
+  font-size: 20px;
+}
+
 .composer {
   position: sticky;
   bottom: 0;
   display: grid;
   gap: 8px;
-  padding: 10px max(24px, calc((100vw - 300px - var(--thread-width)) / 2)) 18px;
+  padding: 10px max(24px, calc((100% - var(--thread-width)) / 2)) 18px;
   background: linear-gradient(to top, var(--page) 78%, rgba(255, 255, 255, 0));
 }
 
@@ -1316,7 +1374,8 @@ textarea:focus {
 }
 
 @media (max-width: 600px) {
-  .shell {
+  .shell,
+  .shell.drawer-open {
     grid-template-columns: 1fr;
   }
 
@@ -1343,6 +1402,21 @@ textarea:focus {
 
   .scroll-button {
     right: 18px;
+  }
+}
+
+@media (min-width: 601px) and (max-width: 1180px) {
+  .shell.drawer-open {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+
+  .drawer-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 20;
+    width: min(520px, calc(100vw - 32px));
+    box-shadow: -24px 0 60px rgba(17, 24, 39, 0.12);
   }
 }
 
@@ -1373,7 +1447,7 @@ textarea:focus {
     justify-self: end;
   }
 
-  .knowledge-panel {
+  .drawer-panel {
     width: 100vw;
     padding: 16px;
   }
