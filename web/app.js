@@ -78,6 +78,7 @@ const state = {
   feedbackEditorMessageId: "",
   autoFollowLatest: true,
   suppressScrollHandlerUntil: 0,
+  lastMessagesScrollTop: 0,
   drawer: {
     open: false,
     view: "knowledge",
@@ -341,9 +342,24 @@ function isNearBottom() {
 }
 
 function scrollToBottom(behavior = "auto") {
-  state.suppressScrollHandlerUntil = Date.now() + 350;
-  el.messages.scrollTo({ top: el.messages.scrollHeight, behavior });
+  state.suppressScrollHandlerUntil = Date.now() + 700;
+  if (behavior === "smooth") {
+    el.messages.scrollTo({ top: el.messages.scrollHeight, behavior });
+  } else {
+    el.messages.scrollTop = el.messages.scrollHeight;
+  }
+  state.lastMessagesScrollTop = el.messages.scrollTop;
   updateScrollButton();
+}
+
+function followLatestAfterRender(behavior = "auto") {
+  requestAnimationFrame(() => {
+    if (!state.autoFollowLatest) return;
+    scrollToBottom(behavior);
+    requestAnimationFrame(() => {
+      if (state.autoFollowLatest) scrollToBottom("auto");
+    });
+  });
 }
 
 function updateScrollButton() {
@@ -413,16 +429,17 @@ function startThinkingProgress(assistantMessage, userMessage) {
 }
 
 function render(options = {}) {
+  if (options.forceScroll) state.autoFollowLatest = true;
   const shouldPin = options.followLatest
     ? state.autoFollowLatest
-    : !options.preserveScroll && (options.forceScroll || isNearBottom());
+    : !options.preserveScroll && (options.forceScroll || isNearBottom() || (state.busy && state.autoFollowLatest));
   renderThreads();
   renderMessages();
   renderAttachments();
   renderShareBar();
   renderKnowledgePanel();
   updateComposerControls();
-  if (shouldPin) requestAnimationFrame(() => scrollToBottom(options.smooth ? "smooth" : "auto"));
+  if (shouldPin) followLatestAfterRender(options.smooth ? "smooth" : "auto");
   updateScrollButton();
 }
 
@@ -1003,7 +1020,9 @@ function renderMessageActions(message) {
   const thumbsUp = document.createElement("button");
   thumbsUp.type = "button";
   thumbsUp.className = "thumbs-up-action";
-  thumbsUp.textContent = "Thumbs Up";
+  thumbsUp.textContent = "👍";
+  thumbsUp.title = "Thumbs up";
+  thumbsUp.setAttribute("aria-label", "Thumbs up");
   thumbsUp.dataset.action = "thumbs-up-message";
   thumbsUp.dataset.messageId = message.id;
   actions.appendChild(thumbsUp);
@@ -1135,6 +1154,148 @@ function renderMessageMeta(message) {
   return meta;
 }
 
+const LATEX_SYMBOLS = {
+  "\\alpha": "α",
+  "\\beta": "β",
+  "\\gamma": "γ",
+  "\\delta": "δ",
+  "\\Delta": "Δ",
+  "\\epsilon": "ε",
+  "\\lambda": "λ",
+  "\\mu": "μ",
+  "\\pi": "π",
+  "\\rho": "ρ",
+  "\\sigma": "σ",
+  "\\Sigma": "Σ",
+  "\\theta": "θ",
+  "\\omega": "ω",
+  "\\Omega": "Ω",
+  "\\sum": "Σ",
+  "\\prod": "Π",
+  "\\infty": "∞",
+  "\\times": "×",
+  "\\cdot": "·",
+  "\\le": "≤",
+  "\\leq": "≤",
+  "\\ge": "≥",
+  "\\geq": "≥",
+  "\\neq": "≠",
+  "\\approx": "≈",
+  "\\pm": "±",
+};
+
+function normalizeMathFormula(value) {
+  let formula = String(value || "").trim();
+  if (formula.startsWith("$$") && formula.endsWith("$$")) formula = formula.slice(2, -2);
+  else if (formula.startsWith("\\(") && formula.endsWith("\\)")) formula = formula.slice(2, -2);
+  else if (formula.startsWith("\\[") && formula.endsWith("\\]")) formula = formula.slice(2, -2);
+  else if (formula.startsWith("$") && formula.endsWith("$")) formula = formula.slice(1, -1);
+  return formula.trim();
+}
+
+function shouldRenderMathToken(token) {
+  if (token.startsWith("$$") || token.startsWith("\\(") || token.startsWith("\\[")) return true;
+  if (!token.startsWith("$")) return false;
+  const formula = normalizeMathFormula(token);
+  return /[\\^_=+\-*/<>]|[A-Za-z]\s*\(/.test(formula);
+}
+
+function readMathArgument(source, startIndex) {
+  let index = startIndex;
+  while (source[index] === " ") index += 1;
+  if (source[index] !== "{") {
+    return { value: source[index] || "", end: Math.min(index + 1, source.length) };
+  }
+  let depth = 0;
+  for (let cursor = index; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+    if (depth === 0) {
+      return { value: source.slice(index + 1, cursor), end: cursor + 1 };
+    }
+  }
+  return { value: source.slice(index + 1), end: source.length };
+}
+
+function renderMathFormula(value, display = false) {
+  const formula = normalizeMathFormula(value);
+  const node = document.createElement(display ? "div" : "span");
+  node.className = display ? "math-block" : "math-inline";
+  node.setAttribute("aria-label", `Formula: ${formula}`);
+  appendMathParts(node, formula);
+  return node;
+}
+
+function appendMathParts(node, formula) {
+  let index = 0;
+  let buffer = "";
+
+  const flush = () => {
+    if (!buffer) return;
+    node.appendChild(document.createTextNode(buffer));
+    buffer = "";
+  };
+
+  while (index < formula.length) {
+    if (formula.startsWith("\\frac", index)) {
+      flush();
+      const numerator = readMathArgument(formula, index + 5);
+      const denominator = readMathArgument(formula, numerator.end);
+      const fraction = document.createElement("span");
+      fraction.className = "math-frac";
+      const top = document.createElement("span");
+      top.className = "math-frac-num";
+      const bottom = document.createElement("span");
+      bottom.className = "math-frac-den";
+      appendMathParts(top, numerator.value);
+      appendMathParts(bottom, denominator.value);
+      fraction.append(top, bottom);
+      node.appendChild(fraction);
+      index = denominator.end;
+      continue;
+    }
+
+    if (formula.startsWith("\\sqrt", index)) {
+      flush();
+      const argument = readMathArgument(formula, index + 5);
+      const root = document.createElement("span");
+      root.className = "math-root";
+      const radicand = document.createElement("span");
+      appendMathParts(radicand, argument.value);
+      root.append("√", radicand);
+      node.appendChild(root);
+      index = argument.end;
+      continue;
+    }
+
+    const char = formula[index];
+    if (char === "^" || char === "_") {
+      flush();
+      const argument = readMathArgument(formula, index + 1);
+      const script = document.createElement(char === "^" ? "sup" : "sub");
+      appendMathParts(script, argument.value);
+      node.appendChild(script);
+      index = argument.end;
+      continue;
+    }
+
+    if (char === "\\") {
+      const command = formula.slice(index).match(/^\\[A-Za-z]+/);
+      if (command) {
+        buffer += LATEX_SYMBOLS[command[0]] || command[0].slice(1);
+        index += command[0].length;
+        continue;
+      }
+    }
+
+    if (char !== "{" && char !== "}") buffer += char;
+    index += 1;
+  }
+
+  flush();
+}
+
 function renderMarkdown(container, text) {
   const lines = String(text || "").split(/\r?\n/);
   let inCode = false;
@@ -1159,7 +1320,7 @@ function renderMarkdown(container, text) {
 
   const appendInlineMarkdown = (node, value) => {
     const source = String(value || "");
-    const tokenPattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\))/g;
+    const tokenPattern = /(`[^`]+`|\$\$[^$]+\$\$|\\\([^)]*\\\)|\\\[[^\]]*\\\]|\$[^$\n]+\$|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\))/g;
     let lastIndex = 0;
     let match;
 
@@ -1175,6 +1336,8 @@ function renderMarkdown(container, text) {
         const code = document.createElement("code");
         code.textContent = token.slice(1, -1);
         node.appendChild(code);
+      } else if (shouldRenderMathToken(token)) {
+        node.appendChild(renderMathFormula(token, token.startsWith("$$") || token.startsWith("\\[")));
       } else if (
         (token.startsWith("**") && token.endsWith("**")) ||
         (token.startsWith("__") && token.endsWith("__"))
@@ -1279,6 +1442,38 @@ function renderMarkdown(container, text) {
 
     if (inCode) {
       codeLines.push(rawLine);
+      continue;
+    }
+
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith("$$")) {
+      closeList();
+      const mathLines = [];
+      let first = trimmedLine.slice(2);
+      if (first.endsWith("$$") && first.length > 2) {
+        first = first.slice(0, -2);
+        container.appendChild(renderMathFormula(`$$${first}$$`, true));
+        continue;
+      }
+      if (first) mathLines.push(first);
+      while (index + 1 < lines.length) {
+        index += 1;
+        const mathLine = lines[index].trim();
+        if (mathLine.endsWith("$$")) {
+          const last = mathLine.slice(0, -2);
+          if (last) mathLines.push(last);
+          break;
+        }
+        mathLines.push(lines[index]);
+      }
+      container.appendChild(renderMathFormula(`$$${mathLines.join("\n")}$$`, true));
+      continue;
+    }
+
+    const bracketMath = trimmedLine.match(/^\\\[(.*)\\\]$/);
+    if (bracketMath) {
+      closeList();
+      container.appendChild(renderMathFormula(`\\[${bracketMath[1]}\\]`, true));
       continue;
     }
 
@@ -1686,13 +1881,16 @@ function scrollToSharedRange() {
 }
 
 function handleMessagesScroll() {
+  const currentTop = el.messages.scrollTop;
+  const scrolledUp = currentTop < state.lastMessagesScrollTop - 8;
   if (Date.now() > state.suppressScrollHandlerUntil) {
-    if (state.busy && !isNearBottom()) {
-      state.autoFollowLatest = false;
-    } else if (isNearBottom()) {
+    if (isNearBottom()) {
       state.autoFollowLatest = true;
+    } else if (scrolledUp) {
+      state.autoFollowLatest = false;
     }
   }
+  state.lastMessagesScrollTop = currentTop;
   updateScrollButton();
 }
 

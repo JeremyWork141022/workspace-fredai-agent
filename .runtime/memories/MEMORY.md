@@ -9,3 +9,5 @@ Correction policy: keep raw uploaded source documents stable. If a user says an 
 Answerability policy: for "what is/define/explain X" questions, do not answer from source text that merely lists or mentions X. If indexed documents do not define X, say so, give only clearly labeled inference when useful, and log a concise wiki_issue for later glossary/correction review.
 ---ENTRY---
 Response style policy: be concise by default. Provide long detail only when the user asks for detail, a plan, an implementation explanation, or another deliberate long-form response.
+---ENTRY---
+Formula policy: do not invent formulas. When formulas are present in indexed documents, preserve the formula text, cite the source evidence, and present formulas with explicit math delimiters such as `\( ... \)` for inline formulas or `$$ ... $$` for display formulas. If a needed formula is not available in source evidence, say so and log or suggest a wiki_issue for review.

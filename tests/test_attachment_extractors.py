@@ -34,6 +34,29 @@ def _minimal_docx(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def _minimal_docx_with_formula() -> bytes:
+    xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Formula example:</w:t></w:r>
+      <m:oMath>
+        <m:f>
+          <m:num><m:r><m:t>A</m:t></m:r></m:num>
+          <m:den><m:r><m:t>B</m:t></m:r></m:den>
+        </m:f>
+      </m:oMath>
+    </w:p>
+  </w:body>
+</w:document>
+"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("word/document.xml", xml)
+    return buffer.getvalue()
+
+
 def _minimal_xlsx() -> bytes:
     workbook = """<?xml version="1.0" encoding="UTF-8"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -120,6 +143,21 @@ class AttachmentExtractorTests(unittest.TestCase):
 
         self.assertIn("Hello from DOCX", result.text)
         self.assertEqual(result.source, "inline_base64")
+
+    def test_inline_base64_docx_extracts_office_math(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = extract_attachment(
+                {
+                    "name": "formula.docx",
+                    "extension": ".docx",
+                    "data_base64": _b64(_minimal_docx_with_formula()),
+                },
+                index=1,
+                workspace_root=Path(tmp),
+            )
+
+        self.assertIn("Formula example", result.text)
+        self.assertIn("[Formula: (A)/(B)]", result.text)
 
     def test_inline_base64_xlsx_extracts_sheet_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

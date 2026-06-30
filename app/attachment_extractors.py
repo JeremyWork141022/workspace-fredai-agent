@@ -87,6 +87,7 @@ def attachment_capabilities() -> Dict[str, Any]:
         "notes": [
             "Images are forwarded to FredAI as OpenAI-compatible image_url content parts.",
             "PDFs use optional text extraction first and optional PyMuPDF page-image rendering for scanned or image-heavy pages.",
+            "DOCX Office Math formulas are extracted as best-effort readable formula text.",
             "Install pypdf for PDF text extraction and PyMuPDF for PDF page rendering on the work computer.",
             "Legacy .doc and .xls require external parsers; save as .docx, .xlsx, or CSV.",
         ],
@@ -695,15 +696,119 @@ def _word_table(table: ElementTree.Element) -> str:
 
 def _word_text(element: ElementTree.Element) -> str:
     parts: List[str] = []
-    for node in element.iter():
-        tag = _strip_ns(node.tag)
-        if tag == "t" and node.text:
-            parts.append(node.text)
-        elif tag == "tab":
-            parts.append("\t")
-        elif tag in {"br", "cr"}:
-            parts.append("\n")
+
+    def walk(node: ElementTree.Element) -> None:
+        for child in list(node):
+            tag = _strip_ns(child.tag)
+            if _is_math_node(child):
+                formula = _omml_formula_text(child)
+                if formula:
+                    parts.append(f" [Formula: {formula}] ")
+                continue
+            if tag == "t" and child.text:
+                parts.append(child.text)
+            elif tag == "tab":
+                parts.append("\t")
+            elif tag in {"br", "cr"}:
+                parts.append("\n")
+            walk(child)
+
+    walk(element)
     return "".join(parts).strip()
+
+
+def _is_math_node(node: ElementTree.Element) -> bool:
+    return _xml_namespace(node.tag) == "http://schemas.openxmlformats.org/officeDocument/2006/math" and _strip_ns(
+        node.tag
+    ) in {"oMath", "oMathPara"}
+
+
+def _xml_namespace(tag: str) -> str:
+    return tag[1:].split("}", 1)[0] if tag.startswith("{") and "}" in tag else ""
+
+
+def _omml_formula_text(element: ElementTree.Element) -> str:
+    text = _omml_node_text(element)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _omml_node_text(node: ElementTree.Element) -> str:
+    tag = _strip_ns(node.tag)
+    if tag == "t":
+        return node.text or ""
+    if tag == "chr":
+        return node.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/math}val") or node.attrib.get(
+            "val", ""
+        )
+
+    if tag == "f":
+        num = _omml_first_child_text(node, "num")
+        den = _omml_first_child_text(node, "den")
+        return f"({num})/({den})" if num or den else _omml_children_text(node)
+
+    if tag == "sSup":
+        base = _omml_first_child_text(node, "e")
+        sup = _omml_first_child_text(node, "sup")
+        return f"{base}^{_wrap_formula_part(sup)}"
+
+    if tag == "sSub":
+        base = _omml_first_child_text(node, "e")
+        sub = _omml_first_child_text(node, "sub")
+        return f"{base}_{_wrap_formula_part(sub)}"
+
+    if tag == "sSubSup":
+        base = _omml_first_child_text(node, "e")
+        sub = _omml_first_child_text(node, "sub")
+        sup = _omml_first_child_text(node, "sup")
+        return f"{base}_{_wrap_formula_part(sub)}^{_wrap_formula_part(sup)}"
+
+    if tag == "rad":
+        degree = _omml_first_child_text(node, "deg")
+        base = _omml_first_child_text(node, "e")
+        return f"root_{_wrap_formula_part(degree)}({base})" if degree else f"sqrt({base})"
+
+    if tag == "nary":
+        operator = _omml_first_child_text(node, "chr") or "sum"
+        sub = _omml_first_child_text(node, "sub")
+        sup = _omml_first_child_text(node, "sup")
+        expr = _omml_first_child_text(node, "e")
+        limits = ""
+        if sub:
+            limits += f"_{_wrap_formula_part(sub)}"
+        if sup:
+            limits += f"^{_wrap_formula_part(sup)}"
+        return f"{operator}{limits}({expr})" if expr else f"{operator}{limits}"
+
+    if tag == "d":
+        beg = _omml_first_child_text(node, "begChr") or "("
+        end = _omml_first_child_text(node, "endChr") or ")"
+        expr = _omml_first_child_text(node, "e")
+        return f"{beg}{expr}{end}"
+
+    if tag in {"num", "den", "e", "sub", "sup", "deg", "oMath", "oMathPara", "r"}:
+        return _omml_children_text(node)
+
+    return _omml_children_text(node)
+
+
+def _omml_first_child_text(node: ElementTree.Element, child_tag: str) -> str:
+    for child in list(node):
+        if _strip_ns(child.tag) == child_tag:
+            return _omml_node_text(child).strip()
+    return ""
+
+
+def _omml_children_text(node: ElementTree.Element) -> str:
+    parts = [_omml_node_text(child) for child in list(node)]
+    return "".join(part for part in parts if part)
+
+
+def _wrap_formula_part(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    return value if re.fullmatch(r"[A-Za-z0-9]+", value) else f"({value})"
 
 
 def _extract_xlsx(raw: bytes) -> tuple[str, str]:

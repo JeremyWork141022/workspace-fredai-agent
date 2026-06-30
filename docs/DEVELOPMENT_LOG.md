@@ -3,6 +3,87 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Formula Extraction And Formula Rendering
+
+### Request
+
+CRT Analytics documentation will contain many math formulas. The agent should
+handle formulas when documents are uploaded and should present formulas
+readably in chat responses. `MEMORY.md` should also tell the agent not to
+invent formulas.
+
+### Implemented Changes
+
+- Added a formula policy to `.runtime/memories/MEMORY.md`.
+- The formula policy tells the agent:
+  - do not invent formulas,
+  - preserve formula text from source evidence,
+  - cite source evidence when formulas are used,
+  - use explicit math delimiters such as `\( ... \)` or `$$ ... $$`,
+  - say when a needed formula is not available in the indexed source material.
+- Added best-effort DOCX Office Math extraction in
+  `app/attachment_extractors.py`.
+- DOCX formulas are now extracted as readable text markers such as
+  `[Formula: (A)/(B)]` so FredAI can retrieve and reason over formula content
+  from uploaded Word documents.
+- Added frontend formula rendering in `web/app.js` without external packages.
+- Supported chat formula delimiters:
+  - inline `$...$` when the content looks math-like,
+  - inline `\(...\)`,
+  - display `$$...$$`,
+  - display `\[...\]`.
+- Added lightweight rendering for common formula structures:
+  - superscript,
+  - subscript,
+  - `\frac{...}{...}`,
+  - `\sqrt{...}`,
+  - common symbols such as `\alpha`, `\Delta`, `\sum`, `\leq`, `\geq`.
+- Added CSS classes for inline math, display math, fractions, and roots.
+- Added a unit test for DOCX Office Math formula extraction.
+
+### Limitations
+
+- This intentionally does not add KaTeX, MathJax, Pandoc, OCR, or other
+  package-heavy formula tooling because the work computer may block packages.
+- DOCX formula extraction is best-effort over Office Open XML math nodes. It
+  preserves formulas in a readable form but is not a full symbolic math parser.
+- PDF/image formula extraction still depends on existing PDF text extraction,
+  FredAI vision support, or future OCR work.
+
+## 2026-06-30 - Chat Follow-Latest Scrolling And Emoji Feedback
+
+### Request
+
+Make the thumbs-up feedback control a real thumbs-up icon, and make the chat
+automatically stay at the latest content while the agent is generating. If the
+user scrolls upward during generation, stop automatic follow so the user can
+read earlier messages.
+
+### Implemented Changes
+
+- Changed the per-message positive feedback action from the text label
+  `Thumbs Up` to the `👍` icon with an accessible label and tooltip.
+- Strengthened the chat follow-latest logic in `web/app.js`.
+- Added a post-render follow step that scrolls after layout has updated, then
+  checks one frame later again. This handles long responses and progressive
+  thinking/progress content more reliably than a single pre-render bottom
+  check.
+- Added scroll-direction tracking through `state.lastMessagesScrollTop`.
+- Kept automatic scrolling active while the user remains near the bottom.
+- Disabled automatic scrolling when the user scrolls upward away from the
+  bottom, including while the agent is still thinking.
+- Clicking the scroll-to-bottom button re-enables follow-latest behavior.
+
+### Behavior Rule
+
+The UI should act like a normal chat product:
+
+- New agent progress should stay visible by default.
+- The browser should not force the user back down after the user intentionally
+  scrolls up to inspect prior messages.
+- Returning to the bottom, or pressing the bottom arrow, opts back into
+  automatic follow.
+
 ## 2026-06-30 - Extensible Right Drawer Framework And Positive Feedback
 
 ### Request
