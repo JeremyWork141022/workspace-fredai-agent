@@ -124,7 +124,7 @@
 
         <div id="drawerBody" class="drawer-body" data-drawer-view="knowledge">
           <section id="knowledgeView" class="drawer-view knowledge-view" aria-label="Knowledge base browser">
-            <form id="knowledgeForm" class="knowledge-form">
+            <form id="knowledgeForm" class="knowledge-form" data-drawer-section="upload">
               <div class="knowledge-form-header">
                 <h3 id="knowledgeFormTitle">Upload Source Document</h3>
                 <button id="knowledgeCancelReplaceButton" class="hidden" type="button">Cancel Replace</button>
@@ -150,17 +150,17 @@
 
             <div id="knowledgeTagFilters" class="knowledge-tags" aria-label="Knowledge tag filters"></div>
 
-            <div class="knowledge-section">
+            <div id="knowledgeSectionDocuments" class="knowledge-section" data-drawer-section="documents">
               <h3>Documentation Folder</h3>
               <div id="knowledgeDocs" class="knowledge-list"></div>
             </div>
 
-            <div class="knowledge-section">
+            <div id="knowledgeSectionWiki" class="knowledge-section" data-drawer-section="wiki_pages">
               <h3>Wiki Pages</h3>
               <div id="knowledgeWiki" class="knowledge-list compact"></div>
             </div>
 
-            <div class="knowledge-section">
+            <div id="knowledgeSectionIssues" class="knowledge-section" data-drawer-section="pending_corrections">
               <h3>Pending Corrections</h3>
               <div id="knowledgeIssues" class="knowledge-list compact"></div>
             </div>
@@ -174,6 +174,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260630-drawer-framework"></script>
+    <script src="/static/app.js?v=20260630-ui-events"></script>
   </body>
 </html>

@@ -145,6 +145,9 @@ const el = {
   knowledgeUploadButton: document.querySelector("#knowledgeUploadButton"),
   knowledgeStatus: document.querySelector("#knowledgeStatus"),
   knowledgeTagFilters: document.querySelector("#knowledgeTagFilters"),
+  knowledgeSectionDocuments: document.querySelector("#knowledgeSectionDocuments"),
+  knowledgeSectionWiki: document.querySelector("#knowledgeSectionWiki"),
+  knowledgeSectionIssues: document.querySelector("#knowledgeSectionIssues"),
   knowledgeDocs: document.querySelector("#knowledgeDocs"),
   knowledgeWiki: document.querySelector("#knowledgeWiki"),
   knowledgeIssues: document.querySelector("#knowledgeIssues"),
@@ -723,12 +726,14 @@ function knowledgeEmpty(text) {
   return empty;
 }
 
-async function openKnowledgePanel() {
+async function openKnowledgePanel(options = {}) {
   openDrawer("knowledge");
+  if (options.reason) setKnowledgeStatus(options.reason);
   renderKnowledgePanel();
-  if (!state.knowledge.documents.length && !state.knowledge.loading) {
+  if ((options.refresh || !state.knowledge.documents.length) && !state.knowledge.loading) {
     await refreshKnowledgeBase();
   }
+  focusDrawerSection(options.section || "documents");
 }
 
 function openDrawer(view = "knowledge") {
@@ -741,6 +746,84 @@ function closeDrawer() {
   state.drawer.open = false;
   state.knowledge.replaceDocumentId = "";
   renderKnowledgePanel();
+}
+
+function drawerSectionElement(section) {
+  const key = String(section || "").trim();
+  if (key === "upload") return el.knowledgeForm;
+  if (key === "wiki_pages") return el.knowledgeSectionWiki;
+  if (key === "pending_corrections") return el.knowledgeSectionIssues;
+  return el.knowledgeSectionDocuments;
+}
+
+function focusDrawerSection(section) {
+  if (!state.drawer.open || state.drawer.view !== "knowledge") return;
+  const target = drawerSectionElement(section);
+  if (!target) return;
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.classList.add("drawer-section-highlight");
+    window.setTimeout(() => target.classList.remove("drawer-section-highlight"), 1800);
+  });
+}
+
+function applyUiEvents(events) {
+  const list = Array.isArray(events) ? events : [];
+  for (const event of list) {
+    if (!event || event.type !== "open_drawer") continue;
+    const view = DRAWER_VIEWS[event.view] ? event.view : "empty";
+    if (view === "knowledge") {
+      openKnowledgePanel({
+        section: event.section || "documents",
+        reason: event.reason || "",
+        refresh: true,
+      }).catch((error) => {
+        console.warn("Could not apply knowledge drawer UI event", error);
+      });
+    } else {
+      openDrawer(view);
+    }
+  }
+}
+
+function mockUiEventsForMessage(text) {
+  const query = String(text || "").toLowerCase();
+  const hasInventoryVerb = /\b(show|open|list|view|check|see|browse|display|what|which|where|how many)\b/.test(query);
+  if (!hasInventoryVerb) return [];
+  if (/\b(pending corrections?|wiki issues?|correction issues?)\b/.test(query)) {
+    return [
+      {
+        type: "open_drawer",
+        view: "knowledge",
+        section: "pending_corrections",
+        reason: "Mock UI event: knowledge correction inventory requested.",
+        source: "mock_ui_event_router",
+      },
+    ];
+  }
+  if (/\b(wiki pages?|glossary|curated wiki)\b/.test(query)) {
+    return [
+      {
+        type: "open_drawer",
+        view: "knowledge",
+        section: "wiki_pages",
+        reason: "Mock UI event: wiki inventory requested.",
+        source: "mock_ui_event_router",
+      },
+    ];
+  }
+  if (/\b(knowledge source|knowledge sources|knowledge base|knowledge inventory|source documents?|indexed documents?|documentation indexed|uploaded documents?|documentation folder|document library|my sources?)\b/.test(query) || /\b(what|which)\s+sources?\s+do\s+you\s+have\b/.test(query)) {
+    return [
+      {
+        type: "open_drawer",
+        view: "knowledge",
+        section: "documents",
+        reason: "Mock UI event: knowledge source inventory requested.",
+        source: "mock_ui_event_router",
+      },
+    ];
+  }
+  return [];
 }
 
 function mockKnowledgePayload() {
@@ -1959,10 +2042,16 @@ async function runAssistantRequest(userMessage, options = {}) {
     message: userMessage.text,
     attachments: userMessage.payloadAttachments || [],
   };
+  let pendingUiEvents = [];
 
   try {
     if (MOCK_MODE) {
       await completeMockAssistantResponse(userMessage, assistantMessage);
+      pendingUiEvents = mockUiEventsForMessage(userMessage.text);
+      assistantMessage.meta = {
+        ...(assistantMessage.meta || {}),
+        uiEvents: pendingUiEvents,
+      };
     } else {
       const res = await fetch("/agent/respond", {
         method: "POST",
@@ -1980,6 +2069,7 @@ async function runAssistantRequest(userMessage, options = {}) {
       if (data.user_message_id) userMessage.serverId = String(data.user_message_id);
       if (data.assistant_message_id) assistantMessage.serverId = String(data.assistant_message_id);
 
+      pendingUiEvents = Array.isArray(data.ui_events) ? data.ui_events : [];
       assistantMessage.status = data.status === "success" ? "complete" : "error";
       assistantMessage.text = data.answer || "";
       assistantMessage.meta = {
@@ -1987,6 +2077,7 @@ async function runAssistantRequest(userMessage, options = {}) {
         durationMs: data.duration_ms,
         toolNames: data.tool_names || [],
         progressMessages: data.progress_messages || [],
+        uiEvents: pendingUiEvents,
       };
 
       if (draftTitleForNewSession && state.sessionId) {
@@ -2017,6 +2108,7 @@ async function runAssistantRequest(userMessage, options = {}) {
     await refreshThreads();
     setTurnMeta("");
     if (state.sessionId) replaceThreadUrl(state.sessionId);
+    applyUiEvents(pendingUiEvents);
     render(state.autoFollowLatest ? { forceScroll: true } : { preserveScroll: true });
     el.messageInput.focus();
   }

@@ -3,6 +3,130 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - Backend UI Events For Knowledge Drawer Auto-Open
+
+### User Questions
+
+- Why does the drawer not automatically pop up when the user asks
+  "what is my knowledge source"?
+- What is the current drawer UI logic?
+- What is the current trigger logic for opening the drawer?
+- How should this be fixed while preserving the reusable drawer
+  infrastructure for future different views?
+- Can an LLM API call be used later without dramatically increasing runtime?
+
+### Current-State Diagnosis Before This Change
+
+- The drawer infrastructure existed in the UI as a reusable shell:
+  - `DRAWER_VIEWS` in `web/app.js`,
+  - `state.drawer`,
+  - `openDrawer(view)`,
+  - `closeDrawer()`,
+  - `renderDrawer()`.
+- The implemented view was `knowledge`.
+- The drawer opened reliably from the left-sidebar `Knowledge Base` button.
+- The current active code did not contain an automatic trigger for ordinary
+  chat questions.
+- An older development-log note referenced a frontend-only
+  `isKnowledgeIntent` matcher. That implementation was no longer present in
+  the active `web/app.js`, so asking "what is my knowledge source" did not
+  open the drawer automatically.
+
+### Implemented Fix
+
+- Added a backend-to-frontend UI event contract to `/agent/respond`.
+- Extended `AgentResponse` and `AgentRespondResponse` with:
+
+```json
+{
+  "ui_events": [
+    {
+      "type": "open_drawer",
+      "view": "knowledge",
+      "section": "documents",
+      "reason": "User asked for knowledge-base/source inventory.",
+      "source": "backend_ui_event_router"
+    }
+  ]
+}
+```
+
+- Added deterministic backend routing in `app/ui_events.py`, called by
+  `WorkspaceAgentOrchestrator` before the response is returned.
+- The router emits an `open_drawer` event for knowledge inventory/source
+  questions such as:
+  - "what is my knowledge source",
+  - "show knowledge base",
+  - "list source documents",
+  - "what documentation is indexed",
+  - "show wiki pages",
+  - "show pending wiki issues".
+- Added section routing:
+  - source/document questions open the `documents` section,
+  - wiki/glossary questions open the `wiki_pages` section,
+  - pending correction/wiki issue questions open the
+    `pending_corrections` section.
+- Added frontend `applyUiEvents(events)`.
+- The frontend now consumes `data.ui_events` after `/agent/respond`.
+- `open_drawer` events still use the existing reusable drawer shell, so future
+  views can reuse the same right-side container.
+- Added drawer section IDs and a short section highlight when an event opens a
+  specific section.
+- Added mock-mode UI event routing so `?mock=1` can test the behavior without
+  FredAI.
+- Added tests for:
+  - `"what is my knowledge source"` opening the Knowledge Base documents
+    section,
+  - pending wiki issue questions opening the pending corrections section,
+  - unrelated questions not opening a drawer.
+
+### Current Trigger Logic After This Change
+
+The trigger is backend-owned and cheap:
+
+1. User sends a message through `/agent/respond`.
+2. The normal agent turn runs.
+3. Before returning the response, the backend checks the user text with a
+   deterministic inventory-intent router.
+4. If the user asked for knowledge/source/wiki/correction inventory, the
+   backend returns `ui_events`.
+5. The browser applies the events and opens the right drawer.
+
+This does not add another FredAI call, embedding call, OCR pass, or retrieval
+pass. Runtime impact is negligible.
+
+### Future Low-Runtime LLM Router Plan
+
+If deterministic routing becomes too limited, add a small optional UI-router
+model call only when the cheap router is uncertain and the user text contains
+UI/navigation verbs such as "show", "open", "display", "browse", "where",
+"what is my", or "list".
+
+The model call should:
+
+- use a tiny prompt,
+- return strict JSON,
+- choose only from registered drawer views and sections,
+- run after or parallel to the main response only for ambiguous UI-intent
+  cases,
+- never perform document retrieval itself,
+- never replace tool calls or knowledge search.
+
+The eventual router output should match the same `ui_events` contract, for
+example:
+
+```json
+{
+  "type": "open_drawer",
+  "view": "files",
+  "section": "generated_outputs",
+  "reason": "The user asked to inspect files created by the EVA run."
+}
+```
+
+This keeps the current drawer architecture stable while allowing future views
+such as file explorer, process dashboard, schedule/planner, and tool activity.
+
 ## 2026-06-30 - Formula Extraction And Formula Rendering
 
 ### Request
@@ -446,7 +570,11 @@ answer only "it is one of the required input files."
   labeled inference if useful, and create or suggest a wiki issue/glossary
   correction.
 
-### Current Drawer Trigger
+### Historical Drawer Trigger Superseded On 2026-06-30
+
+This section describes an older frontend-only approach. The active
+implementation now uses backend-returned `ui_events`; see
+`2026-06-30 - Backend UI Events For Knowledge Drawer Auto-Open`.
 
 The knowledge drawer auto-open trigger is frontend-only JavaScript in
 `web/app.js` (`isKnowledgeIntent`). It is not a model tool call. Before sending

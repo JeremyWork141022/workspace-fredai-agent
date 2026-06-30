@@ -20,6 +20,7 @@ from app.memory_store import MemoryStore
 from app.scheduler import ScheduledJob
 from app.session_store import SessionStore, utc_now
 from app.tools import ToolContext, ToolRegistry, build_core_tool_registry
+from app.ui_events import ui_events_for_turn
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class AgentResponse:
     duration_ms: int
     status: str
     progress_messages: List[str]
+    ui_events: List[Dict[str, Any]]
     error: str = ""
     user_message_id: Optional[int] = None
     assistant_message_id: Optional[int] = None
@@ -62,6 +64,7 @@ class AgentResponse:
             "duration_ms": self.duration_ms,
             "status": self.status,
             "progress_messages": self.progress_messages,
+            "ui_events": self.ui_events,
             "user_message_id": self.user_message_id,
             "assistant_message_id": self.assistant_message_id,
         }
@@ -111,6 +114,7 @@ class WorkspaceAgentOrchestrator:
         error_text = ""
         tool_names: List[str] = []
         progress_messages: List[str] = []
+        ui_events: List[Dict[str, Any]] = []
         user_message_id: Optional[int] = None
         assistant_message_id: Optional[int] = None
 
@@ -191,6 +195,12 @@ class WorkspaceAgentOrchestrator:
         answer = (answer or "").strip() or "I received your message, but I could not generate a clear reply."
         finished_at = utc_now()
         duration_ms = int((time.perf_counter() - timer_start) * 1000)
+        ui_events = ui_events_for_turn(
+            query_text=message,
+            tool_names=tool_names,
+            attachments=attachments or [],
+            status=status,
+        )
 
         assistant_record = self.session_store.append_message(
             session_id=session.id,
@@ -200,6 +210,7 @@ class WorkspaceAgentOrchestrator:
                 "request_duration_ms": duration_ms,
                 "tool_names": tool_names,
                 "progress_messages": progress_messages,
+                "ui_events": ui_events,
                 "status": status,
             },
         )
@@ -214,6 +225,7 @@ class WorkspaceAgentOrchestrator:
                 "status": status,
                 "tool_names": tool_names,
                 "progress_messages": progress_messages,
+                "ui_events": ui_events,
                 "assistant_message_id": assistant_message_id,
             },
         )
@@ -250,6 +262,7 @@ class WorkspaceAgentOrchestrator:
             duration_ms=duration_ms,
             status=status,
             progress_messages=progress_messages,
+            ui_events=ui_events,
             error=error_text,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,

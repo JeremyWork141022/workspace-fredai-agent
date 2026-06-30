@@ -516,6 +516,13 @@ textarea:focus {
 .knowledge-section {
   display: grid;
   gap: 8px;
+  border-radius: 8px;
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.drawer-section-highlight {
+  background: rgba(15, 118, 110, 0.06);
+  box-shadow: 0 0 0 8px rgba(15, 118, 110, 0.06);
 }
 
 .knowledge-list {

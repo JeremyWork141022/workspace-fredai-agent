@@ -34,6 +34,7 @@ class AgentRespondResponse(BaseModel):
     duration_ms: int
     status: str
     progress_messages: List[str]
+    ui_events: List[Dict[str, Any]] = Field(default_factory=list)
     error: Optional[str] = None
     user_message_id: Optional[int] = None
     assistant_message_id: Optional[int] = None
