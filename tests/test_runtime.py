@@ -31,6 +31,26 @@ class SessionStoreTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.title, "June operating review")
 
+    def test_message_feedback_is_persisted_with_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            store = SessionStore(db_path)
+            session = store.get_or_create_session(workspace_id="ws", user_id="u")
+            assistant = store.append_message(session_id=session.id, role="assistant", content="Loan List.xlsx is an input file.")
+
+            feedback = store.add_message_feedback(
+                message_id=assistant.id,
+                user_id="reviewer",
+                label="comment",
+                comment="Too circular; define Loan List as the deal loan IDs.",
+            )
+            grouped = store.feedback_for_messages([assistant.id])
+            recent = store.list_message_feedback(workspace_id="ws", session_id=session.id, limit=10)
+
+            self.assertEqual(feedback.message_id, assistant.id)
+            self.assertEqual(grouped[assistant.id][0].comment, "Too circular; define Loan List as the deal loan IDs.")
+            self.assertEqual(recent[0].user_id, "reviewer")
+
 
 class MemoryStoreTests(unittest.TestCase):
     def test_workspace_notes_and_routines(self) -> None:

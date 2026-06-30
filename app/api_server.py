@@ -43,6 +43,12 @@ class SessionRenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+class MessageFeedbackRequest(BaseModel):
+    user_id: str = Field(default="shared", max_length=160)
+    label: str = Field(default="comment", max_length=40)
+    comment: str = Field(min_length=1, max_length=4000)
+
+
 class KnowledgeDocumentUploadRequest(BaseModel):
     workspace_id: str = Field(default="default")
     knowledge_base: str = Field(default=DEFAULT_KNOWLEDGE_BASE)
@@ -312,6 +318,7 @@ async def get_session(session_id: str, limit: int = 500) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
     messages = orchestrator.session_store.recent_messages(session.id, limit=max(1, min(limit, 2000)))
     visible_messages = [message for message in messages if message.role in {"user", "assistant"}]
+    feedback_by_message_id = orchestrator.session_store.feedback_for_messages([message.id for message in visible_messages])
     return {
         "session": {
             "id": session.id,
@@ -332,6 +339,10 @@ async def get_session(session_id: str, limit: int = 500) -> Dict[str, Any]:
                 "attachments": _message_display_attachments(message),
                 "created_at": message.created_at,
                 "metadata": message.metadata,
+                "feedback": [
+                    orchestrator.session_store.feedback_to_dict(feedback)
+                    for feedback in feedback_by_message_id.get(message.id, [])
+                ],
             }
             for message in visible_messages
         ],
@@ -353,6 +364,39 @@ async def rename_session(session_id: str, request: SessionRenameRequest) -> Dict
             "updated_at": session.updated_at,
             "metadata": session.metadata,
         }
+    }
+
+
+@app.post("/agent/messages/{message_id}/feedback")
+async def add_message_feedback(message_id: int, request: MessageFeedbackRequest) -> Dict[str, Any]:
+    try:
+        feedback = orchestrator.session_store.add_message_feedback(
+            message_id=message_id,
+            user_id=request.user_id,
+            label=request.label,
+            comment=request.comment,
+        )
+    except ValueError as exc:
+        detail = str(exc) or "could not save message feedback"
+        status_code = 404 if "not found" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail)
+    return {"feedback": orchestrator.session_store.feedback_to_dict(feedback)}
+
+
+@app.get("/agent/feedback")
+async def list_message_feedback(
+    workspace_id: str = "",
+    session_id: str = "",
+    limit: int = 200,
+) -> Dict[str, Any]:
+    feedback = orchestrator.session_store.list_message_feedback(
+        workspace_id=workspace_id,
+        session_id=session_id,
+        limit=limit,
+    )
+    return {
+        "count": len(feedback),
+        "feedback": [orchestrator.session_store.feedback_to_dict(item) for item in feedback],
     }
 
 

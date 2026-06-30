@@ -62,6 +62,7 @@ const state = {
   attachments: [],
   selectedShareIds: new Set(),
   activeShareRange: null,
+  feedbackEditorMessageId: "",
   knowledge: {
     open: false,
     loading: false,
@@ -889,6 +890,13 @@ function renderMessage(message) {
   }
   article.appendChild(content);
 
+  const feedback = renderMessageFeedback(message.feedback || []);
+  if (feedback) article.appendChild(feedback);
+
+  if (state.feedbackEditorMessageId === message.id) {
+    article.appendChild(renderFeedbackEditor(message));
+  }
+
   const actions = renderMessageActions(message);
   if (actions) article.appendChild(actions);
 
@@ -947,7 +955,79 @@ function renderMessageActions(message) {
   copy.dataset.messageId = message.id;
   actions.appendChild(copy);
 
+  const flag = document.createElement("button");
+  flag.type = "button";
+  flag.className = "flag-action";
+  flag.textContent = "Red Flag";
+  flag.dataset.action = "flag-message";
+  flag.dataset.messageId = message.id;
+  actions.appendChild(flag);
+
   return actions;
+}
+
+function renderMessageFeedback(feedbackItems) {
+  const items = (feedbackItems || []).filter((item) => item?.comment);
+  if (!items.length) return null;
+
+  const container = document.createElement("div");
+  container.className = "message-feedback";
+
+  const title = document.createElement("strong");
+  title.textContent = items.length === 1 ? "Review comment" : "Review comments";
+  container.appendChild(title);
+
+  const list = document.createElement("div");
+  list.className = "message-feedback-list";
+  for (const item of items) {
+    const entry = document.createElement("div");
+    entry.className = "message-feedback-entry";
+    const comment = document.createElement("span");
+    comment.textContent = item.comment;
+    const meta = document.createElement("small");
+    const author = item.user_id || item.userId || "shared";
+    const createdAt = item.created_at || item.createdAt || "";
+    meta.textContent = [author, createdAt ? formatThreadTime(createdAt) : ""].filter(Boolean).join(" | ");
+    entry.append(comment, meta);
+    list.appendChild(entry);
+  }
+  container.appendChild(list);
+  return container;
+}
+
+function renderFeedbackEditor(message) {
+  const editor = document.createElement("div");
+  editor.className = "feedback-editor";
+
+  const label = document.createElement("label");
+  label.textContent = "Add comment";
+  label.setAttribute("for", `feedback-${message.id}`);
+
+  const textarea = document.createElement("textarea");
+  textarea.id = `feedback-${message.id}`;
+  textarea.rows = 3;
+  textarea.maxLength = 4000;
+  textarea.placeholder = "Add comment about this message. Good, bad, wrong, unclear, or follow-up needed.";
+  textarea.dataset.feedbackInputFor = message.id;
+
+  const actions = document.createElement("div");
+  actions.className = "feedback-editor-actions";
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Save Comment";
+  save.dataset.action = "save-feedback";
+  save.dataset.messageId = message.id;
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.dataset.action = "cancel-feedback";
+  cancel.dataset.messageId = message.id;
+
+  actions.append(save, cancel);
+  editor.append(label, textarea, actions);
+  return editor;
 }
 
 function renderMessageMeta(message) {
@@ -1203,6 +1283,7 @@ function persistCurrentMockThread() {
       createdAt: message.createdAt,
       meta: message.meta || {},
       attachments: message.attachments || [],
+      feedback: message.feedback || [],
     })),
   });
   saveMockThreads(threads);
@@ -1260,6 +1341,7 @@ function mapServerMessage(message) {
     text: message.text || "",
     createdAt: message.created_at || new Date().toISOString(),
     attachments: message.attachments || metadata.attachments || [],
+    feedback: message.feedback || [],
     meta: {
       durationMs: metadata.request_duration_ms,
       toolNames: metadata.tool_names || [],
@@ -1278,6 +1360,7 @@ function mapMockMessage(message) {
     createdAt: message.createdAt || new Date().toISOString(),
     meta: message.meta || {},
     attachments: message.attachments || [],
+    feedback: message.feedback || [],
   };
 }
 
@@ -1286,6 +1369,7 @@ async function loadThread(sessionId, options = {}) {
   state.loadingThreadId = sessionId;
   state.draftThread = null;
   state.renamingThreadId = "";
+  state.feedbackEditorMessageId = "";
   state.renameDraftValue = "";
   state.renameSelectPending = false;
   setTurnMeta("Loading thread", "busy");
@@ -1845,6 +1929,78 @@ async function copyMessage(id) {
   }, 1200);
 }
 
+function feedbackInputFor(messageId) {
+  return Array.from(el.messages.querySelectorAll("[data-feedback-input-for]")).find(
+    (node) => node.dataset.feedbackInputFor === String(messageId),
+  );
+}
+
+function openFeedbackEditor(id) {
+  state.feedbackEditorMessageId = id;
+  render({ preserveScroll: true });
+  window.requestAnimationFrame(() => {
+    feedbackInputFor(id)?.focus();
+  });
+}
+
+function cancelFeedbackEditor(id) {
+  if (!id || state.feedbackEditorMessageId === id) {
+    state.feedbackEditorMessageId = "";
+    render({ preserveScroll: true });
+  }
+}
+
+async function saveMessageFeedback(id) {
+  const message = state.messages.find((item) => item.id === id);
+  const input = feedbackInputFor(id);
+  const comment = input?.value.trim() || "";
+  if (!message || !comment) {
+    setTurnMeta("Add a comment before saving.", "warn");
+    input?.focus();
+    return;
+  }
+
+  const userId = el.userId.value.trim() || SHARED_USER_ID;
+  try {
+    if (MOCK_MODE) {
+      message.feedback = [
+        ...(message.feedback || []),
+        {
+          id: createId("mock_feedback"),
+          session_id: state.sessionId,
+          message_id: getMessageShareId(message),
+          user_id: userId,
+          label: "comment",
+          comment,
+          created_at: new Date().toISOString(),
+        },
+      ];
+      persistCurrentMockThread();
+    } else {
+      const serverMessageId = Number(message.serverId);
+      if (!Number.isFinite(serverMessageId)) {
+        throw new Error("This message is not saved on the server yet. Try again after the response finishes.");
+      }
+      const res = await fetch(`/agent/messages/${encodeURIComponent(String(serverMessageId))}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, label: "comment", comment }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      message.feedback = [...(message.feedback || []), data.feedback];
+    }
+    state.feedbackEditorMessageId = "";
+    setTurnMeta("Review comment saved.");
+    render({ preserveScroll: true });
+    setTimeout(() => {
+      if (!state.busy) setTurnMeta("");
+    }, 1400);
+  } catch (err) {
+    setTurnMeta(`Could not save review comment: ${err.message}`, "warn");
+  }
+}
+
 function newSession() {
   state.sessionId = "";
   state.lastRequestId = "";
@@ -1863,6 +2019,7 @@ function newSession() {
   state.messages = [];
   state.selectedShareIds.clear();
   state.activeShareRange = null;
+  state.feedbackEditorMessageId = "";
   for (const attachment of state.attachments) {
     if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   }
@@ -1938,6 +2095,9 @@ function handleMessageClick(event) {
   const action = button.dataset.action;
   if (action === "toggle-share-message") toggleShareMessage(button.dataset.messageId);
   if (action === "copy-message") copyMessage(button.dataset.messageId);
+  if (action === "flag-message") openFeedbackEditor(button.dataset.messageId);
+  if (action === "save-feedback") saveMessageFeedback(button.dataset.messageId);
+  if (action === "cancel-feedback") cancelFeedbackEditor(button.dataset.messageId);
 }
 
 function handleThreadListClick(event) {

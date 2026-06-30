@@ -75,6 +75,18 @@ class MessageRecord:
 
 
 @dataclass
+class MessageFeedbackRecord:
+    id: int
+    session_id: str
+    message_id: int
+    workspace_id: str
+    user_id: str
+    label: str
+    comment: str
+    created_at: str
+
+
+@dataclass
 class SessionSearchResult:
     message_id: int
     session_id: str
@@ -150,6 +162,22 @@ class SessionStore:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                    workspace_id TEXT NOT NULL DEFAULT '',
+                    user_id TEXT NOT NULL DEFAULT '',
+                    label TEXT NOT NULL DEFAULT 'comment',
+                    comment TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_message_feedback_session ON message_feedback(session_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_message_feedback_message ON message_feedback(message_id, created_at)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS request_metrics (
@@ -446,6 +474,102 @@ class SessionStore:
                 messages.append({"role": message.role, "content": message.content})
         return messages
 
+    def add_message_feedback(
+        self,
+        *,
+        message_id: int,
+        user_id: str = "",
+        label: str = "comment",
+        comment: str,
+    ) -> MessageFeedbackRecord:
+        clean_comment = comment.strip()
+        if not clean_comment:
+            raise ValueError("comment is required")
+        clean_label = (label or "comment").strip()[:40] or "comment"
+        clean_user = (user_id or "shared").strip()[:160] or "shared"
+        now = utc_now()
+        with self._connection() as conn:
+            message_row = conn.execute(
+                """
+                SELECT m.id, m.session_id, s.workspace_id
+                FROM messages m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE m.id = ?
+                """,
+                (int(message_id),),
+            ).fetchone()
+            if not message_row:
+                raise ValueError("message not found")
+            cursor = conn.execute(
+                """
+                INSERT INTO message_feedback
+                    (session_id, message_id, workspace_id, user_id, label, comment, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(message_row["session_id"]),
+                    int(message_row["id"]),
+                    str(message_row["workspace_id"]),
+                    clean_user,
+                    clean_label,
+                    clean_comment[:4000],
+                    now,
+                ),
+            )
+            row = conn.execute("SELECT * FROM message_feedback WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return self._row_to_feedback(row)
+
+    def feedback_for_messages(self, message_ids: List[int]) -> Dict[int, List[MessageFeedbackRecord]]:
+        clean_ids = sorted({int(message_id) for message_id in message_ids if message_id is not None})
+        if not clean_ids:
+            return {}
+        placeholders = ",".join("?" for _ in clean_ids)
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM message_feedback
+                WHERE message_id IN ({placeholders})
+                ORDER BY created_at ASC, id ASC
+                """,
+                clean_ids,
+            ).fetchall()
+        grouped: Dict[int, List[MessageFeedbackRecord]] = {message_id: [] for message_id in clean_ids}
+        for row in rows:
+            feedback = self._row_to_feedback(row)
+            grouped.setdefault(feedback.message_id, []).append(feedback)
+        return grouped
+
+    def list_message_feedback(
+        self,
+        *,
+        workspace_id: str = "",
+        session_id: str = "",
+        limit: int = 200,
+    ) -> List[MessageFeedbackRecord]:
+        where: List[str] = []
+        params: List[Any] = []
+        if workspace_id:
+            where.append("workspace_id = ?")
+            params.append(workspace_id)
+        if session_id:
+            where.append("session_id = ?")
+            params.append(session_id)
+        params.append(max(1, min(limit, 1000)))
+        clause = "WHERE " + " AND ".join(where) if where else ""
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM message_feedback
+                {clause}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._row_to_feedback(row) for row in rows]
+
     def list_sessions(self, *, workspace_id: str = "", user_id: str = "", limit: int = 20) -> List[SessionRecord]:
         where: List[str] = []
         params: List[Any] = []
@@ -702,3 +826,29 @@ class SessionStore:
             created_at=str(row["created_at"]),
             metadata=json_loads(str(row["metadata_json"]), {}),
         )
+
+    @staticmethod
+    def _row_to_feedback(row: sqlite3.Row) -> MessageFeedbackRecord:
+        return MessageFeedbackRecord(
+            id=int(row["id"]),
+            session_id=str(row["session_id"]),
+            message_id=int(row["message_id"]),
+            workspace_id=str(row["workspace_id"]),
+            user_id=str(row["user_id"]),
+            label=str(row["label"]),
+            comment=str(row["comment"]),
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def feedback_to_dict(feedback: MessageFeedbackRecord) -> Dict[str, Any]:
+        return {
+            "id": feedback.id,
+            "session_id": feedback.session_id,
+            "message_id": feedback.message_id,
+            "workspace_id": feedback.workspace_id,
+            "user_id": feedback.user_id,
+            "label": feedback.label,
+            "comment": feedback.comment,
+            "created_at": feedback.created_at,
+        }

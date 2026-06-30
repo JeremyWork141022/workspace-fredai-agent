@@ -3,6 +3,41 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-29 - Message Red Flag Review Trail
+
+### Request
+
+Add a durable way to flag a specific chat message and attach a reviewer
+comment, good or bad, so daily review can find problematic answers and decide
+whether they should become wiki corrections or glossary entries.
+
+### Changes
+
+- Added `message_feedback` SQLite storage in `app/session_store.py`.
+- Added backend review APIs:
+  - `POST /agent/messages/{message_id}/feedback`
+  - `GET /agent/feedback`
+- Updated `GET /agent/sessions/{session_id}` so each visible user/assistant
+  message includes its saved feedback comments.
+- Added a `Red Flag` message action in the chat UI.
+- Added an inline comment editor for a selected message.
+- Render saved review comments under the exact message they belong to.
+- Preserved mock-mode comments in browser `localStorage` for UI-only testing.
+- Added regression coverage for message feedback persistence.
+
+### Design Notes
+
+- Source-document uploads shown in the knowledge sidebar are stored on the
+  backend machine running FastAPI, not on each user's browser. In the current
+  prototype, original uploaded source-file bytes are retained as base64 text in
+  the `knowledge_files.content_base64` column in `.runtime/state.sqlite3`.
+- Red-flag comments are session-review annotations, not automatic knowledge
+  corrections. This keeps the original answer intact while making mistakes easy
+  to audit and promote into wiki pages, wiki issues, or curated memory later.
+- In shared-session mode, everyone viewing the same thread can see the same
+  review comments. A future private-user mode should decide whether review
+  comments are shared, reviewer-only, or manager-only.
+
 ## 2026-06-29 - Single Curated Memory And Knowledge Browser
 
 ### Request
