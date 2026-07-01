@@ -2,6 +2,18 @@
 
 Put the approved KaTeX browser distribution files here.
 
+Minimum npm-based setup:
+
+```powershell
+npm install katex --no-save
+
+New-Item -ItemType Directory -Force web\vendor\katex
+
+Copy-Item -Force node_modules\katex\dist\katex.min.js web\vendor\katex\
+Copy-Item -Force node_modules\katex\dist\katex.min.css web\vendor\katex\
+Copy-Item -Recurse -Force node_modules\katex\dist\fonts web\vendor\katex\
+```
+
 Minimum files/folders expected by the UI:
 
 ```text

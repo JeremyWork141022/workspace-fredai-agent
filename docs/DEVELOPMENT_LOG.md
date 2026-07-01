@@ -34,10 +34,19 @@ window.katex.render(...)
 
 ### Minimum Work-Computer Setup
 
-The minimum setup is to copy the KaTeX browser distribution into:
+The minimum setup is to use npm only as a download/copy mechanism, then serve
+KaTeX from the app's static folder:
 
-```text
-web/vendor/katex/
+```powershell
+cd "C:\Users\Jeremy\Documents\Working Agent"
+
+npm install katex --no-save
+
+New-Item -ItemType Directory -Force web\vendor\katex
+
+Copy-Item -Force node_modules\katex\dist\katex.min.js web\vendor\katex\
+Copy-Item -Force node_modules\katex\dist\katex.min.css web\vendor\katex\
+Copy-Item -Recurse -Force node_modules\katex\dist\fonts web\vendor\katex\
 ```
 
 Required files/folders:
