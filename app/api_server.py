@@ -247,6 +247,7 @@ async def health() -> Dict[str, Any]:
         "scheduler_enabled": config.scheduler_enabled,
         "memory": orchestrator.memory_manager.debug_state(),
         "knowledge": orchestrator.knowledge_store.debug_state(),
+        "dashboards": orchestrator.dashboard_store.debug_state(),
         "attachment_capabilities": attachments,
         "capabilities": {
             "streaming": False,
@@ -577,6 +578,29 @@ async def download_knowledge_document(document_id: str, workspace_id: str = "") 
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={fallback['file_name']}"},
     )
+
+
+@app.get("/agent/dashboards")
+async def list_dashboards(
+    workspace_id: str = "",
+    session_id: str = "",
+    pinned_only: bool = False,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    specs = orchestrator.dashboard_store.list_specs(
+        workspace_id=workspace_id or "default",
+        session_id=session_id,
+        pinned_only=pinned_only,
+        limit=max(1, min(limit, 500)),
+    )
+    return {
+        "count": len(specs),
+        "dashboards": [orchestrator.dashboard_store.to_dict(spec) for spec in specs],
+        "guidance": (
+            "Dashboard specs are sandbox/session artifacts. Clean CRT Cost source data remains read-only "
+            "until a future approved data-execution tool runs aggregations."
+        ),
+    }
 
 
 @app.get("/agent/traces/{request_id}")

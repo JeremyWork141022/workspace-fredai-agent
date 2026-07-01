@@ -12,6 +12,7 @@ import httpx
 
 from app.attachment_extractors import extract_attachment
 from app.config import AppConfig, workspace_root
+from app.dashboard_store import DashboardStore
 from app.fredai_auth import FredAIAuthError
 from app.fredai_client import ChatCompletionResult, FredAIClient, FredAIClientError
 from app.knowledge_store import KnowledgeStore
@@ -91,10 +92,12 @@ class WorkspaceAgentOrchestrator:
         self.memory_store = memory_store or MemoryStore()
         self.memory_manager = AgentMemoryManager(config, self.memory_store)
         self.knowledge_store = KnowledgeStore(self.memory_store.db_path)
+        self.dashboard_store = DashboardStore(self.memory_store.db_path)
         self.tool_registry = tool_registry or build_core_tool_registry(
             session_store=self.session_store,
             memory_manager=self.memory_manager,
             knowledge_store=self.knowledge_store,
+            dashboard_store=self.dashboard_store,
             config=config,
         )
         self.hook_registry = hook_registry or build_default_hook_registry()
@@ -317,6 +320,7 @@ class WorkspaceAgentOrchestrator:
             session_store=self.session_store,
             memory_manager=self.memory_manager,
             knowledge_store=self.knowledge_store,
+            dashboard_store=self.dashboard_store,
             summarize_session_search=summarize_session_search,
         )
         instructions = self._build_instructions(workspace_id=workspace_id, user_id=user_id)
@@ -544,6 +548,8 @@ Runtime architecture:
 - Use routine_rule for future behavior, standing preferences, scheduled work, reusable workflows, or missing tool requests.
 - Use workspace file tools only for files under WORKSPACE_AGENT_ROOT.
 - For questions about this agent's own implementation, code, API, UI, tools, memory, hooks, or documentation, inspect the local project with workspace_find_files/workspace_list_files/workspace_read_file before answering. Cite the files you used.
+- For CRT Cost dashboard requests, use crt_cost_dataset_catalog to inspect the governed field/metric catalog, then crt_cost_dashboard_spec to create a pinned dashboard/chart spec. Do not claim real source-data aggregation ran until a future approved execution tool returns data.
+- Keep clean CRT Cost source data read-only. Treat agent-created filters, derived columns, formulas, charts, and dashboard specs as sandbox/session artifacts until approved.
 - Use knowledge_ingest when the user asks to digest, index, add, or remember an attached/source document.
 - Use wiki_search/wiki_read first for conceptual process questions when curated wiki pages exist.
 - Use knowledge_search for broad source-document retrieval and knowledge_grep for exact terms, script names, metrics, field names, or IDs.
@@ -798,6 +804,8 @@ Runtime architecture:
             "wiki_read": "Reading wiki pages.",
             "wiki_write": "Updating the process wiki.",
             "wiki_issue": "Logging a wiki knowledge issue.",
+            "crt_cost_dataset_catalog": "Checking the CRT Cost dashboard catalog.",
+            "crt_cost_dashboard_spec": "Drafting a CRT Cost dashboard spec.",
         }
         return messages.get(tool_name, "Using a workspace tool.")
 

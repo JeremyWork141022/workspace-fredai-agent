@@ -3,6 +3,99 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-07-01 - CRT Cost Dashboard And Database Scaffold
+
+### Request
+
+Design and start implementing a CRT Cost dashboard/database system where the
+agent can understand deal-level CRT Cost data, explain transformations and
+business meaning, and later control dashboard filters/charts from user prompts.
+
+The user also asked for a flexible UI where the dashboard drawer can become the
+main screen, chat can shrink to a small corner, and generated dashboards/charts
+can be pinned as durable artifacts.
+
+### Design Definition
+
+In this project, "100% flexible" means governed flexibility, not arbitrary code
+execution:
+
+- user requests can be expressed in business language,
+- the agent maps those requests to approved fields, metrics, formulas, filters,
+  and chart types,
+- underspecified requests produce clarification questions,
+- generated dashboard specs are saved and revisitable,
+- source data remains read-only,
+- filters, derived columns, formulas, and chart specs live in a sandbox layer.
+
+### Implemented Changes
+
+- Added `app/dashboard_store.py`.
+- Added a SQLite `dashboard_specs` table for pinned dashboard/chart
+  specifications.
+- Added `crt_cost_dataset_catalog`.
+- Added `crt_cost_dashboard_spec`.
+- Wired `DashboardStore` into `WorkspaceAgentOrchestrator`.
+- Added CRT Cost dashboard runtime instructions to the system prompt.
+- Added user-facing progress messages for dashboard planning tool calls.
+- Added a dashboard runtime hook in `app/runtime_hooks.py`.
+- Added `GET /agent/dashboards`.
+- Added dashboard counts to `/health`.
+- Added a `Dashboards` sidebar button.
+- Added a reusable dashboard drawer view.
+- Added full-drawer mode with a minimized chat panel.
+- Added dashboard cards, metric/filter chips, structural chart previews, and a
+  clean-source/sandbox boundary block.
+- Added mock-mode dashboard behavior for local UI testing.
+- Added tests for dashboard tool storage and dashboard drawer hook routing.
+- Added `docs/CRT_COST_DASHBOARD_DATABASE_ARCHITECTURE.md`.
+
+### Current Runtime Flow
+
+For a request such as "Create a bar chart of CRT Cost by settle year for STACR
+deals":
+
+1. FredAI should call `crt_cost_dataset_catalog`.
+2. FredAI should call `crt_cost_dashboard_spec`.
+3. The backend saves a pinned dashboard spec.
+4. The dashboard runtime hook emits an `open_drawer` event.
+5. The UI opens the dashboard drawer and shows the saved spec.
+
+The current preview is a design/spec preview only. It does not execute source
+data or calculate real aggregation output yet.
+
+### Backend Boundary
+
+The clean CRT Cost source database should be read-only to the agent. The current
+implementation stores agent-created dashboard specs separately in the runtime
+SQLite database. Future data execution tools should keep this separation:
+
+- clean source layer: approved source rows and lineage,
+- catalog layer: field definitions, metrics, formulas, and allowed filters,
+- sandbox layer: session-linked dashboard specs, formulas, transformations, and
+  generated results.
+
+### Assistant-UI Research Notes
+
+The assistant-ui source uses a reusable assistant modal/thread pattern and a
+builder-style page where a primary work surface and AI chat can trade focus.
+The useful pattern for this project is not importing assistant-ui directly. It
+is keeping a reusable drawer shell with swappable views, then letting runtime
+events decide which view should open.
+
+### Follow-Up Work
+
+- Add a non-sensitive sample CRT Cost CSV/XLSX.
+- Add a real CRT Cost data dictionary.
+- Add a formula catalog, especially for CRT Cost bps and partial-year
+  normalization.
+- Add deterministic dataset profiling.
+- Add deterministic aggregation execution.
+- Add formula validation.
+- Connect real aggregation output to dashboard rendering.
+- Add approval rules before any sandbox result is promoted into a governed
+  dashboard or source-derived artifact.
+
 ## 2026-07-01 - Switch Formula Rendering Back To KaTeX
 
 ### Request

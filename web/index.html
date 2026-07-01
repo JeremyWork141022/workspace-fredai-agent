@@ -33,6 +33,10 @@
           Knowledge Base
         </button>
 
+        <button id="dashboardButton" class="sidebar-action-button" type="button">
+          Dashboards
+        </button>
+
         <nav id="threadList" class="thread-list" aria-label="Shared threads"></nav>
 
         <div class="status-panel" aria-label="Server status">
@@ -119,7 +123,11 @@
             <h2 id="drawerTitle">Knowledge Base</h2>
             <p id="drawerDescription">Source documents stay raw. Corrections and clarifications belong in the wiki layer.</p>
           </div>
-          <button id="drawerCloseButton" type="button">Close</button>
+          <div class="drawer-header-actions">
+            <button id="drawerFocusChatButton" type="button">Focus Chat</button>
+            <button id="drawerMaximizeButton" type="button">Maximize</button>
+            <button id="drawerCloseButton" type="button">Close</button>
+          </div>
         </header>
 
         <div id="drawerBody" class="drawer-body" data-drawer-view="knowledge">
@@ -164,6 +172,35 @@
               <h3>Pending Corrections</h3>
               <div id="knowledgeIssues" class="knowledge-list compact"></div>
             </div>
+          </section>
+
+          <section id="dashboardView" class="drawer-view dashboard-view hidden" aria-label="CRT Cost dashboard browser">
+            <div class="dashboard-toolbar">
+              <button id="dashboardRefreshButton" type="button">Refresh</button>
+              <span id="dashboardStatus"></span>
+            </div>
+
+            <section class="dashboard-section" data-drawer-section="specs">
+              <h3>Pinned Dashboard Specs</h3>
+              <p>
+                These are governed chart/dashboard drafts created by the agent. They do not modify clean source data.
+              </p>
+              <div id="dashboardSpecs" class="dashboard-specs"></div>
+            </section>
+
+            <section class="dashboard-section">
+              <h3>Source And Sandbox Boundary</h3>
+              <div class="dashboard-boundary-grid">
+                <article>
+                  <strong>Clean source</strong>
+                  <span>Read-only deal-level CRT Cost data. No chat-created formula, filter, or dashboard should overwrite it.</span>
+                </article>
+                <article>
+                  <strong>Sandbox</strong>
+                  <span>Session-linked dashboard specs, derived-column proposals, assumptions, and pinned views.</span>
+                </article>
+              </div>
+            </section>
           </section>
 
           <div id="drawerEmpty" class="drawer-empty hidden">

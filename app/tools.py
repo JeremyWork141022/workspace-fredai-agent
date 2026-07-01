@@ -3,12 +3,14 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.attachment_extractors import extract_attachment
 from app.config import AppConfig, workspace_root
+from app.dashboard_store import DashboardStore
 from app.knowledge_store import DEFAULT_KNOWLEDGE_BASE, KnowledgeStore
 from app.memory_manager import AgentMemoryManager
 from app.session_store import SessionStore
@@ -138,6 +140,7 @@ class ToolContext:
     session_store: SessionStore
     memory_manager: AgentMemoryManager
     knowledge_store: KnowledgeStore
+    dashboard_store: DashboardStore
     summarize_session_search: Optional[SessionSearchSummarizer] = None
 
     @property
@@ -200,11 +203,77 @@ class ToolRegistry:
             return {"ok": False, "tool": name, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _crt_cost_dashboard_catalog() -> Dict[str, Any]:
+    """Governed starter catalog for CRT Cost dashboard planning."""
+
+    return {
+        "dataset": {
+            "name": "crt_cost_deal_level",
+            "status": "schema_seed",
+            "grain": "one row per deal",
+            "source_boundary": "Clean source data is read-only. Agent-created filters, derived columns, and dashboard specs live in session/workspace sandbox records.",
+        },
+        "fields": [
+            {"name": "deal_id", "label": "Deal ID", "type": "string", "role": "identifier", "operators": ["equals", "contains", "in"]},
+            {"name": "deal_name", "label": "Deal Name", "type": "string", "role": "dimension", "operators": ["equals", "contains", "in"]},
+            {"name": "deal_type", "label": "Deal Type", "type": "string", "role": "dimension", "operators": ["equals", "in"]},
+            {"name": "settle_year", "label": "Settle Year", "type": "integer", "role": "dimension", "operators": ["equals", "between", "in", "gte", "lte"]},
+            {"name": "payoff_date", "label": "Payoff Date", "type": "date", "role": "dimension", "operators": ["between", "gte", "lte", "is_blank"]},
+            {"name": "upb", "label": "UPB", "type": "number", "role": "measure", "operators": ["gte", "lte", "between"]},
+            {"name": "crt_cost", "label": "CRT Cost", "type": "number", "role": "measure", "operators": ["gte", "lte", "between"]},
+            {"name": "crt_cost_bps", "label": "CRT Cost bps", "type": "number", "role": "derived_measure", "operators": ["gte", "lte", "between"]},
+            {"name": "partial_year_factor", "label": "Partial Year Factor", "type": "number", "role": "derived_measure", "operators": ["gte", "lte", "between"]},
+        ],
+        "metrics": [
+            {"name": "sum_crt_cost", "label": "Total CRT Cost", "base_field": "crt_cost", "aggregation": "sum"},
+            {"name": "sum_upb", "label": "Total UPB", "base_field": "upb", "aggregation": "sum"},
+            {
+                "name": "crt_cost_bps",
+                "label": "CRT Cost / UPB bps",
+                "formula": "10000 * sum(crt_cost) / nullif(sum(upb), 0)",
+                "status": "formula_requires_business_validation",
+            },
+            {
+                "name": "normalized_partial_year_crt_cost",
+                "label": "Partial-Year Normalized CRT Cost",
+                "formula": "pending source-approved formula",
+                "status": "knowledge_gap_until_methodology_is_uploaded",
+            },
+        ],
+        "chart_types": ["table", "metric_cards", "bar", "line", "stacked_bar"],
+        "dashboard_views": ["deal_table", "aggregation_chart", "metric_summary", "formula_audit"],
+        "clarification_policy": (
+            "If the user does not specify metric, grouping, filter, timeframe, or formula assumptions, "
+            "ask a focused follow-up before presenting a final operational dashboard."
+        ),
+    }
+
+
+def _catalog_names(catalog: Dict[str, Any], key: str) -> set[str]:
+    return {str(item.get("name") or "") for item in catalog.get(key, []) if isinstance(item, dict)}
+
+
+def _string_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[,;\n]+", text) if part.strip()]
+
+
+def _object_list(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 def build_core_tool_registry(
     *,
     session_store: SessionStore,
     memory_manager: AgentMemoryManager,
     knowledge_store: KnowledgeStore,
+    dashboard_store: DashboardStore,
     config: AppConfig,
 ) -> ToolRegistry:
     registry = ToolRegistry()
@@ -219,6 +288,122 @@ def build_core_tool_registry(
             )
 
         return memory_tool
+
+    async def crt_cost_dataset_catalog(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        catalog = _crt_cost_dashboard_catalog()
+        return {
+            "catalog": catalog,
+            "governance": {
+                "clean_source": "Read-only source database/table. The agent must not overwrite it.",
+                "sandbox": "Session-linked dashboard specs and derived-column proposals are stored separately.",
+                "next_step": "Use crt_cost_dashboard_spec when the user asks to build, customize, pin, or sketch a CRT Cost dashboard/chart.",
+            },
+        }
+
+    async def crt_cost_dashboard_spec(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+        catalog = _crt_cost_dashboard_catalog()
+        field_names = _catalog_names(catalog, "fields")
+        metric_names = _catalog_names(catalog, "metrics")
+        chart_types = set(catalog.get("chart_types", []))
+
+        title = str(args.get("title") or "CRT Cost Dashboard Draft").strip()[:180]
+        user_request = str(args.get("user_request") or "").strip()
+        group_by = _string_list(args.get("group_by"))
+        metrics = _string_list(args.get("metrics"))
+        filters = _object_list(args.get("filters"))
+        chart_type = str(args.get("chart_type") or "table").strip()
+        assumptions = _string_list(args.get("assumptions"))
+        questions = _string_list(args.get("clarification_questions"))
+        notes = str(args.get("notes") or "").strip()
+        pin = bool(args.get("pin", True))
+
+        unknown_group_by = [name for name in group_by if name not in field_names]
+        unknown_metrics = [name for name in metrics if name not in metric_names and name not in field_names]
+        clean_filters: List[Dict[str, Any]] = []
+        unknown_filter_fields: List[str] = []
+        for item in filters:
+            field = str(item.get("field") or "").strip()
+            operator = str(item.get("operator") or "").strip()
+            value = item.get("value")
+            if field and field not in field_names:
+                unknown_filter_fields.append(field)
+            clean_filters.append({"field": field, "operator": operator, "value": value})
+
+        if chart_type not in chart_types:
+            chart_type = "table"
+
+        missing_inputs: List[str] = []
+        if not metrics:
+            missing_inputs.append("metric")
+        if chart_type not in {"metric_cards", "table"} and not group_by:
+            missing_inputs.append("group_by")
+        if unknown_group_by:
+            missing_inputs.append(f"unknown group_by field(s): {', '.join(unknown_group_by)}")
+        if unknown_metrics:
+            missing_inputs.append(f"unknown metric(s): {', '.join(unknown_metrics)}")
+        if unknown_filter_fields:
+            missing_inputs.append(f"unknown filter field(s): {', '.join(unknown_filter_fields)}")
+
+        needs_clarification = bool(missing_inputs or questions)
+        if missing_inputs and not questions:
+            questions = [
+                "Which approved CRT Cost metric should this dashboard use?",
+                "Which grouping or filter should define the business view?",
+            ][: max(1, min(2, len(missing_inputs)))]
+
+        widget_id = f"widget_{uuid.uuid4().hex[:10]}"
+        spec = {
+            "schema_version": "crt_dashboard_spec_v0",
+            "title": title,
+            "intent": user_request,
+            "dataset": catalog["dataset"]["name"],
+            "data_status": "design_spec_only_no_source_rows_executed",
+            "governance": {
+                "source_table_mode": "clean_read_only",
+                "sandbox_scope": "session",
+                "session_id": context.session_id,
+                "created_by": context.user_id,
+            },
+            "filters": clean_filters,
+            "assumptions": assumptions,
+            "clarification_questions": questions,
+            "widgets": [
+                {
+                    "id": widget_id,
+                    "type": chart_type,
+                    "title": title,
+                    "metrics": metrics,
+                    "group_by": group_by,
+                    "notes": notes,
+                    "rendering": {
+                        "kind": "spec_preview",
+                        "message": "This preview shows requested structure. Real aggregation will require an approved data execution tool.",
+                    },
+                }
+            ],
+        }
+        record = context.dashboard_store.save_spec(
+            workspace_id=context.workspace_id,
+            session_id=context.session_id,
+            request_id="",
+            title=title,
+            kind="crt_cost_dashboard",
+            status="needs_clarification" if needs_clarification else "draft",
+            pinned=pin,
+            spec=spec,
+        )
+        return {
+            "saved": True,
+            "dashboard": context.dashboard_store.to_dict(record),
+            "needs_clarification": needs_clarification,
+            "missing_inputs": missing_inputs,
+            "clarification_questions": questions,
+            "next_step": (
+                "Ask the clarification questions before claiming the dashboard is final."
+                if needs_clarification
+                else "Show the pinned dashboard spec in the dashboard drawer. Real data execution is a later approved tool."
+            ),
+        }
 
     async def session_search(context: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
         query = str(args.get("query") or "").strip()
@@ -676,6 +861,78 @@ def build_core_tool_registry(
             "issue": context.knowledge_store.issue_to_dict(issue),
             "next_step": "Use knowledge_search/knowledge_read to verify the correction, then wiki_write to update the page if supported.",
         }
+
+    registry.register(
+        ToolSpec(
+            name="crt_cost_dataset_catalog",
+            toolset="dashboard",
+            description=(
+                "Return the governed CRT Cost dashboard catalog: deal-level fields, approved starter metrics, "
+                "filter operators, chart types, and clean-source/sandbox boundaries. Use before creating a CRT Cost "
+                "dashboard or answering implementation questions about dashboardable fields."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=crt_cost_dataset_catalog,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="crt_cost_dashboard_spec",
+            toolset="dashboard",
+            description=(
+                "Create and pin a CRT Cost dashboard/chart specification from the user's request. This records the "
+                "requested metrics, grouping, filters, assumptions, and needed follow-up questions without modifying "
+                "source data. Use when the user asks to build, customize, visualize, chart, filter, or pin a CRT Cost dashboard."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short dashboard or chart title."},
+                    "user_request": {"type": "string", "description": "Original user intent in plain language."},
+                    "chart_type": {
+                        "type": "string",
+                        "enum": ["table", "metric_cards", "bar", "line", "stacked_bar"],
+                        "default": "table",
+                    },
+                    "metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Approved metric names such as sum_crt_cost, sum_upb, crt_cost_bps.",
+                    },
+                    "group_by": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Approved field names such as settle_year, deal_type, payoff_date.",
+                    },
+                    "filters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": {"type": "string"},
+                                "operator": {"type": "string"},
+                                "value": {"description": "Filter value; string, number, boolean, array, or null."},
+                            },
+                            "required": ["field", "operator"],
+                            "additionalProperties": True,
+                        },
+                    },
+                    "assumptions": {"type": "array", "items": {"type": "string"}},
+                    "clarification_questions": {"type": "array", "items": {"type": "string"}},
+                    "notes": {"type": "string"},
+                    "pin": {"type": "boolean", "default": True},
+                },
+                "required": ["title", "user_request"],
+                "additionalProperties": False,
+            },
+            handler=crt_cost_dashboard_spec,
+        )
+    )
 
     for schema in memory_manager.get_tool_schemas():
         registry.register(

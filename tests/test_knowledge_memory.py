@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app.dashboard_store import DashboardStore
 from app.knowledge_chunker import SplitterConfig, split, split_parent_child
 from app.knowledge_store import KnowledgeStore
 from app.memory_manager import AgentMemoryManager
@@ -157,10 +158,12 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             memory_store = MemoryStore(db_path)
             memory_manager = AgentMemoryManager(_config(), memory_store)
             knowledge_store = KnowledgeStore(db_path)
+            dashboard_store = DashboardStore(db_path)
             registry = build_core_tool_registry(
                 session_store=session_store,
                 memory_manager=memory_manager,
                 knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
                 config=_config(),
             )
             session = session_store.get_or_create_session(workspace_id="ws", user_id="u")
@@ -172,6 +175,7 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
                 session_store=session_store,
                 memory_manager=memory_manager,
                 knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
             )
             ingest = await registry.execute(
                 name="knowledge_ingest",
@@ -203,10 +207,12 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             config = _config()
             memory_manager = AgentMemoryManager(config, memory_store)
             knowledge_store = KnowledgeStore(db_path)
+            dashboard_store = DashboardStore(db_path)
             registry = build_core_tool_registry(
                 session_store=session_store,
                 memory_manager=memory_manager,
                 knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
                 config=config,
             )
             session = session_store.get_or_create_session(workspace_id="ws", user_id="u")
@@ -218,6 +224,7 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
                 session_store=session_store,
                 memory_manager=memory_manager,
                 knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
             )
             await registry.execute(
                 name="knowledge_ingest",
@@ -245,6 +252,54 @@ class KnowledgeToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(search["result"]["knowledge_gap"]["evidence_status"], "definition_not_found")
             self.assertTrue(read["ok"])
             self.assertEqual(read["result"]["knowledge_gap"]["evidence_status"], "definition_not_found")
+
+    async def test_dashboard_tools_create_pinned_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            session_store = SessionStore(db_path)
+            memory_store = MemoryStore(db_path)
+            config = _config()
+            memory_manager = AgentMemoryManager(config, memory_store)
+            knowledge_store = KnowledgeStore(db_path)
+            dashboard_store = DashboardStore(db_path)
+            registry = build_core_tool_registry(
+                session_store=session_store,
+                memory_manager=memory_manager,
+                knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
+                config=config,
+            )
+            session = session_store.get_or_create_session(workspace_id="ws", user_id="u")
+            context = ToolContext(
+                session_id=session.id,
+                workspace_id="ws",
+                user_id="u",
+                config=config,
+                session_store=session_store,
+                memory_manager=memory_manager,
+                knowledge_store=knowledge_store,
+                dashboard_store=dashboard_store,
+            )
+            catalog = await registry.execute(name="crt_cost_dataset_catalog", arguments={}, context=context)
+            created = await registry.execute(
+                name="crt_cost_dashboard_spec",
+                arguments={
+                    "title": "CRT Cost by Settle Year",
+                    "user_request": "Show CRT cost by settle year.",
+                    "chart_type": "bar",
+                    "metrics": ["sum_crt_cost"],
+                    "group_by": ["settle_year"],
+                    "filters": [{"field": "deal_type", "operator": "equals", "value": "STACR"}],
+                },
+                context=context,
+            )
+            stored = dashboard_store.list_specs(workspace_id="ws")
+
+            self.assertTrue(catalog["ok"])
+            self.assertTrue(created["ok"])
+            self.assertEqual(created["result"]["needs_clarification"], False)
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(stored[0].spec["widgets"][0]["type"], "bar")
 
 
 if __name__ == "__main__":

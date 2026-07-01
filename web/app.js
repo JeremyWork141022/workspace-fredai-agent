@@ -18,6 +18,11 @@ const DRAWER_VIEWS = {
     title: "Knowledge Base",
     description: "Source documents stay raw. Corrections and clarifications belong in the wiki layer.",
   },
+  dashboard: {
+    kind: "Dashboard",
+    title: "CRT Cost Dashboards",
+    description: "Pinned dashboard specs, chart requests, filters, and sandboxed data-transformation plans.",
+  },
   empty: {
     kind: "Workspace",
     title: "Drawer Ready",
@@ -82,6 +87,7 @@ const state = {
   drawer: {
     open: false,
     view: "knowledge",
+    mode: "side",
   },
   knowledge: {
     loading: false,
@@ -91,6 +97,12 @@ const state = {
     wikiPages: [],
     wikiIssues: [],
     tagFilter: "",
+    status: "",
+    tone: "",
+  },
+  dashboard: {
+    loading: false,
+    specs: [],
     status: "",
     tone: "",
   },
@@ -129,13 +141,17 @@ const el = {
   runtimeStatus: document.querySelector("#runtimeStatus"),
   newSessionButton: document.querySelector("#newSessionButton"),
   knowledgeButton: document.querySelector("#knowledgeButton"),
+  dashboardButton: document.querySelector("#dashboardButton"),
   drawerPanel: document.querySelector("#drawerPanel"),
   drawerBody: document.querySelector("#drawerBody"),
   drawerKind: document.querySelector("#drawerKind"),
   drawerTitle: document.querySelector("#drawerTitle"),
   drawerDescription: document.querySelector("#drawerDescription"),
   drawerCloseButton: document.querySelector("#drawerCloseButton"),
+  drawerFocusChatButton: document.querySelector("#drawerFocusChatButton"),
+  drawerMaximizeButton: document.querySelector("#drawerMaximizeButton"),
   knowledgeView: document.querySelector("#knowledgeView"),
+  dashboardView: document.querySelector("#dashboardView"),
   drawerEmpty: document.querySelector("#drawerEmpty"),
   knowledgeRefreshButton: document.querySelector("#knowledgeRefreshButton"),
   knowledgeForm: document.querySelector("#knowledgeForm"),
@@ -151,6 +167,9 @@ const el = {
   knowledgeDocs: document.querySelector("#knowledgeDocs"),
   knowledgeWiki: document.querySelector("#knowledgeWiki"),
   knowledgeIssues: document.querySelector("#knowledgeIssues"),
+  dashboardRefreshButton: document.querySelector("#dashboardRefreshButton"),
+  dashboardStatus: document.querySelector("#dashboardStatus"),
+  dashboardSpecs: document.querySelector("#dashboardSpecs"),
   copySessionButton: document.querySelector("#copySessionButton"),
 };
 
@@ -441,6 +460,7 @@ function render(options = {}) {
   renderAttachments();
   renderShareBar();
   renderKnowledgePanel();
+  renderDashboardPanel();
   updateComposerControls();
   if (shouldPin) followLatestAfterRender(options.smooth ? "smooth" : "auto");
   updateScrollButton();
@@ -563,13 +583,17 @@ function setKnowledgeStatus(text, tone = "") {
 function renderDrawer() {
   const view = DRAWER_VIEWS[state.drawer.view] || DRAWER_VIEWS.empty;
   el.shell.classList.toggle("drawer-open", state.drawer.open);
+  el.shell.classList.toggle("drawer-full", state.drawer.open && state.drawer.mode === "full");
   el.drawerPanel.classList.toggle("hidden", !state.drawer.open);
+  el.drawerPanel.classList.toggle("drawer-panel-full", state.drawer.open && state.drawer.mode === "full");
   el.drawerBody.dataset.drawerView = state.drawer.view;
   el.drawerKind.textContent = view.kind;
   el.drawerTitle.textContent = view.title;
   el.drawerDescription.textContent = view.description;
+  el.drawerMaximizeButton.textContent = state.drawer.mode === "full" ? "Side View" : "Maximize";
   el.knowledgeView.classList.toggle("hidden", state.drawer.view !== "knowledge");
-  el.drawerEmpty.classList.toggle("hidden", state.drawer.view === "knowledge");
+  el.dashboardView.classList.toggle("hidden", state.drawer.view !== "dashboard");
+  el.drawerEmpty.classList.toggle("hidden", state.drawer.view === "knowledge" || state.drawer.view === "dashboard");
 }
 
 function renderKnowledgePanel() {
@@ -587,6 +611,168 @@ function renderKnowledgePanel() {
   renderKnowledgeDocuments();
   renderKnowledgeWiki();
   renderKnowledgeIssues();
+}
+
+function setDashboardStatus(text, tone = "") {
+  state.dashboard.status = text || "";
+  state.dashboard.tone = tone || "";
+  renderDashboardPanel();
+}
+
+function renderDashboardPanel() {
+  renderDrawer();
+  el.drawerPanel.classList.toggle("loading", state.knowledge.loading || state.knowledge.uploading || state.dashboard.loading);
+  el.dashboardStatus.textContent = state.dashboard.status || "";
+  el.dashboardStatus.className = state.dashboard.tone ? state.dashboard.tone : "";
+  renderDashboardSpecs();
+}
+
+function renderDashboardSpecs() {
+  el.dashboardSpecs.innerHTML = "";
+  if (state.dashboard.loading) {
+    el.dashboardSpecs.appendChild(dashboardEmpty("Loading dashboard specs..."));
+    return;
+  }
+  if (!state.dashboard.specs.length) {
+    el.dashboardSpecs.appendChild(
+      dashboardEmpty("No dashboard specs yet. Ask the agent to create a CRT Cost chart or dashboard."),
+    );
+    return;
+  }
+  for (const dashboard of state.dashboard.specs) {
+    el.dashboardSpecs.appendChild(renderDashboardSpecCard(dashboard));
+  }
+}
+
+function dashboardEmpty(text) {
+  const node = document.createElement("p");
+  node.className = "dashboard-empty";
+  node.textContent = text;
+  return node;
+}
+
+function renderDashboardSpecCard(dashboard) {
+  const article = document.createElement("article");
+  article.className = "dashboard-card";
+  const spec = dashboard.spec || {};
+  const widgets = Array.isArray(spec.widgets) ? spec.widgets : [];
+  const widget = widgets[0] || {};
+
+  const header = document.createElement("div");
+  header.className = "dashboard-card-header";
+  const title = document.createElement("div");
+  const strong = document.createElement("strong");
+  strong.textContent = dashboard.title || spec.title || "Untitled dashboard";
+  const meta = document.createElement("span");
+  meta.textContent = [
+    dashboard.status || "draft",
+    widget.type || dashboard.kind || "dashboard",
+    dashboard.pinned ? "pinned" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  title.append(strong, meta);
+  const badge = document.createElement("small");
+  badge.textContent = spec.data_status || "spec";
+  header.append(title, badge);
+
+  const intent = document.createElement("p");
+  intent.className = "dashboard-intent";
+  intent.textContent = spec.intent || widget.notes || "No intent recorded.";
+
+  const chips = document.createElement("div");
+  chips.className = "dashboard-chip-row";
+  for (const metric of widget.metrics || []) chips.appendChild(dashboardChip(`Metric: ${metric}`));
+  for (const field of widget.group_by || []) chips.appendChild(dashboardChip(`Group: ${field}`));
+  for (const filter of spec.filters || []) {
+    if (!filter?.field) continue;
+    chips.appendChild(dashboardChip(`Filter: ${filter.field} ${filter.operator || ""}`.trim()));
+  }
+
+  article.append(header, intent, chips, renderDashboardPreview(widget, spec));
+
+  const questions = Array.isArray(spec.clarification_questions) ? spec.clarification_questions.filter(Boolean) : [];
+  if (questions.length) {
+    const list = document.createElement("ul");
+    list.className = "dashboard-questions";
+    for (const question of questions) {
+      const item = document.createElement("li");
+      item.textContent = question;
+      list.appendChild(item);
+    }
+    article.appendChild(list);
+  }
+
+  return article;
+}
+
+function dashboardChip(text) {
+  const chip = document.createElement("span");
+  chip.className = "dashboard-chip";
+  chip.textContent = text;
+  return chip;
+}
+
+function renderDashboardPreview(widget, spec) {
+  const preview = document.createElement("div");
+  const type = widget.type || "table";
+  preview.className = `dashboard-preview dashboard-preview-${type.replaceAll("_", "-")}`;
+
+  if (type === "bar" || type === "stacked_bar") {
+    const values = [72, 54, 88, 46, 64];
+    for (const value of values) {
+      const bar = document.createElement("span");
+      bar.style.height = `${Math.max(12, value)}%`;
+      preview.appendChild(bar);
+    }
+    return preview;
+  }
+
+  if (type === "line") {
+    preview.appendChild(dashboardPreviewText("Line chart preview: trend by selected date/grouping."));
+    return preview;
+  }
+
+  if (type === "metric_cards") {
+    for (const metric of widget.metrics || ["sum_crt_cost", "sum_upb"]) {
+      const card = document.createElement("div");
+      card.className = "dashboard-metric-card";
+      const label = document.createElement("span");
+      label.textContent = metric;
+      const value = document.createElement("strong");
+      value.textContent = "pending";
+      card.append(label, value);
+      preview.appendChild(card);
+    }
+    return preview;
+  }
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const head = document.createElement("tr");
+  for (const heading of [...(widget.group_by || ["deal_id"]), ...(widget.metrics || ["sum_crt_cost"])]) {
+    const th = document.createElement("th");
+    th.textContent = heading;
+    head.appendChild(th);
+  }
+  thead.appendChild(head);
+  const tbody = document.createElement("tbody");
+  const row = document.createElement("tr");
+  for (let index = 0; index < head.children.length; index += 1) {
+    const td = document.createElement("td");
+    td.textContent = index === 0 ? "pending data" : "pending";
+    row.appendChild(td);
+  }
+  tbody.appendChild(row);
+  table.append(thead, tbody);
+  preview.appendChild(table);
+  return preview;
+}
+
+function dashboardPreviewText(text) {
+  const node = document.createElement("p");
+  node.textContent = text;
+  return node;
 }
 
 function knowledgeDocumentTags(doc) {
@@ -736,20 +922,46 @@ async function openKnowledgePanel(options = {}) {
   focusDrawerSection(options.section || "documents");
 }
 
-function openDrawer(view = "knowledge") {
+async function openDashboardPanel(options = {}) {
+  openDrawer("dashboard");
+  if (options.reason) setDashboardStatus(options.reason);
+  renderDashboardPanel();
+  if ((options.refresh || !state.dashboard.specs.length) && !state.dashboard.loading) {
+    await refreshDashboards();
+  }
+  focusDrawerSection(options.section || "specs");
+}
+
+function openDrawer(view = "knowledge", mode = "") {
   state.drawer.view = DRAWER_VIEWS[view] ? view : "empty";
   state.drawer.open = true;
+  if (mode) state.drawer.mode = mode;
   renderDrawer();
 }
 
 function closeDrawer() {
   state.drawer.open = false;
+  state.drawer.mode = "side";
   state.knowledge.replaceDocumentId = "";
-  renderKnowledgePanel();
+  renderDrawer();
+}
+
+function toggleDrawerMaximize() {
+  if (!state.drawer.open) return;
+  state.drawer.mode = state.drawer.mode === "full" ? "side" : "full";
+  renderDrawer();
+}
+
+function focusChatFromDrawer() {
+  state.drawer.mode = "side";
+  state.drawer.open = false;
+  renderDrawer();
+  el.messageInput.focus();
 }
 
 function drawerSectionElement(section) {
   const key = String(section || "").trim();
+  if (state.drawer.view === "dashboard") return el.dashboardSpecs;
   if (key === "upload") return el.knowledgeForm;
   if (key === "wiki_pages") return el.knowledgeSectionWiki;
   if (key === "pending_corrections") return el.knowledgeSectionIssues;
@@ -757,7 +969,7 @@ function drawerSectionElement(section) {
 }
 
 function focusDrawerSection(section) {
-  if (!state.drawer.open || state.drawer.view !== "knowledge") return;
+  if (!state.drawer.open) return;
   const target = drawerSectionElement(section);
   if (!target) return;
   requestAnimationFrame(() => {
@@ -780,6 +992,14 @@ function applyUiEvents(events) {
       }).catch((error) => {
         console.warn("Could not apply knowledge drawer UI event", error);
       });
+    } else if (view === "dashboard") {
+      openDashboardPanel({
+        section: event.section || "specs",
+        reason: event.reason || "",
+        refresh: true,
+      }).catch((error) => {
+        console.warn("Could not apply dashboard drawer UI event", error);
+      });
     } else {
       openDrawer(view);
     }
@@ -797,18 +1017,24 @@ const KNOWLEDGE_TOOL_DRAWER_SECTIONS = {
   wiki_issue: "pending_corrections",
 };
 
+const DASHBOARD_TOOL_DRAWER_SECTIONS = {
+  crt_cost_dataset_catalog: "specs",
+  crt_cost_dashboard_spec: "specs",
+};
+
 function uiEventsFromToolNames(toolNames) {
   const names = Array.isArray(toolNames) ? toolNames : [];
   const matched = names.filter((name) => KNOWLEDGE_TOOL_DRAWER_SECTIONS[name]);
-  if (!matched.length) return [];
-  const sections = new Set(matched.map((name) => KNOWLEDGE_TOOL_DRAWER_SECTIONS[name]));
-  const section = sections.has("pending_corrections")
-    ? "pending_corrections"
-    : sections.has("wiki_pages")
-      ? "wiki_pages"
-      : "documents";
-  return [
-    {
+  const dashboardMatched = names.filter((name) => DASHBOARD_TOOL_DRAWER_SECTIONS[name]);
+  const events = [];
+  if (matched.length) {
+    const sections = new Set(matched.map((name) => KNOWLEDGE_TOOL_DRAWER_SECTIONS[name]));
+    const section = sections.has("pending_corrections")
+      ? "pending_corrections"
+      : sections.has("wiki_pages")
+        ? "wiki_pages"
+        : "documents";
+    events.push({
       type: "open_drawer",
       view: "knowledge",
       section,
@@ -816,8 +1042,20 @@ function uiEventsFromToolNames(toolNames) {
       source: "mock_runtime_hook:knowledge_drawer_on_tool_use",
       matched_tools: matched,
       tool_names: names,
-    },
-  ];
+    });
+  }
+  if (dashboardMatched.length) {
+    events.push({
+      type: "open_drawer",
+      view: "dashboard",
+      section: "specs",
+      reason: `Dashboard hook opened because these tools ran: ${dashboardMatched.join(", ")}.`,
+      source: "mock_runtime_hook:dashboard_drawer_on_tool_use",
+      matched_tools: dashboardMatched,
+      tool_names: names,
+    });
+  }
+  return events;
 }
 
 function mockKnowledgePayload() {
@@ -846,6 +1084,40 @@ function mockKnowledgePayload() {
       },
     ],
     wiki_issues: [],
+  };
+}
+
+function mockDashboardPayload() {
+  return {
+    dashboards: [
+      {
+        id: "mock_dash_crt_cost_settle_year",
+        title: "CRT Cost by Settle Year",
+        kind: "crt_cost_dashboard",
+        status: "draft",
+        pinned: true,
+        updated_at: new Date().toISOString(),
+        spec: {
+          schema_version: "crt_dashboard_spec_v0",
+          title: "CRT Cost by Settle Year",
+          intent: "Show total CRT Cost and UPB by settle year.",
+          dataset: "crt_cost_deal_level",
+          data_status: "design_spec_only_no_source_rows_executed",
+          filters: [{ field: "deal_type", operator: "equals", value: "STACR" }],
+          clarification_questions: [],
+          widgets: [
+            {
+              id: "mock_widget_1",
+              type: "bar",
+              title: "CRT Cost by Settle Year",
+              metrics: ["sum_crt_cost", "sum_upb"],
+              group_by: ["settle_year"],
+              notes: "Mock dashboard spec for local UI testing.",
+            },
+          ],
+        },
+      },
+    ],
   };
 }
 
@@ -878,6 +1150,36 @@ async function refreshKnowledgeBase() {
   } finally {
     state.knowledge.loading = false;
     renderKnowledgePanel();
+  }
+}
+
+async function refreshDashboards() {
+  state.dashboard.loading = true;
+  setDashboardStatus("Refreshing dashboard specs...");
+  try {
+    if (MOCK_MODE) {
+      await waitForMockDelay(250);
+      const data = mockDashboardPayload();
+      state.dashboard.specs = data.dashboards || [];
+      setDashboardStatus("Mock dashboard specs loaded.");
+      return;
+    }
+    const params = new URLSearchParams({
+      workspace_id: el.workspaceId.value.trim() || SHARED_WORKSPACE_ID,
+      limit: "100",
+    });
+    const sessionId = el.sessionId.value.trim();
+    if (sessionId) params.set("session_id", sessionId);
+    const res = await fetch(`/agent/dashboards?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+    state.dashboard.specs = data.dashboards || [];
+    setDashboardStatus(`${state.dashboard.specs.length} dashboard spec(s) listed.`);
+  } catch (err) {
+    setDashboardStatus(`Dashboard refresh failed: ${err.message}`, "warn");
+  } finally {
+    state.dashboard.loading = false;
+    renderDashboardPanel();
   }
 }
 
@@ -2178,6 +2480,9 @@ async function completeMockAssistantResponse(userMessage, assistantMessage) {
   assistantMessage.serverId = assistantMessage.serverId || assistantMessage.id;
 
   assistantMessage.status = "complete";
+  const dashboardIntent = /\b(chart|dashboard|visuali[sz]e|filter|crt cost by|aggregate|aggregation)\b/i.test(
+    userMessage.text || "",
+  );
   assistantMessage.text = [
     "### UI mock response",
     "",
@@ -2213,9 +2518,11 @@ async function completeMockAssistantResponse(userMessage, assistantMessage) {
   assistantMessage.meta = {
     requestId: state.lastRequestId,
     durationMs: Math.round(performance.now() - started),
-    toolNames: attachments.length
-      ? ["knowledge_ingest", "mock_trace_writer"]
-      : ["mock_memory_router", "mock_file_router", "mock_trace_writer"],
+    toolNames: dashboardIntent
+      ? ["crt_cost_dataset_catalog", "crt_cost_dashboard_spec"]
+      : attachments.length
+        ? ["knowledge_ingest", "mock_trace_writer"]
+        : ["mock_memory_router", "mock_file_router", "mock_trace_writer"],
     progressMessages: [
       "Mock mode enabled by ?mock=1.",
       "Skipped /agent/respond so FredAI credentials are not needed.",
@@ -2757,8 +3064,12 @@ el.chatForm.addEventListener("click", handleComposerClick);
 el.stopButton.addEventListener("click", stopRequest);
 el.newSessionButton.addEventListener("click", newSession);
 el.knowledgeButton.addEventListener("click", openKnowledgePanel);
+el.dashboardButton.addEventListener("click", openDashboardPanel);
 el.drawerCloseButton.addEventListener("click", closeDrawer);
+el.drawerFocusChatButton.addEventListener("click", focusChatFromDrawer);
+el.drawerMaximizeButton.addEventListener("click", toggleDrawerMaximize);
 el.knowledgeRefreshButton.addEventListener("click", refreshKnowledgeBase);
+el.dashboardRefreshButton.addEventListener("click", refreshDashboards);
 el.knowledgeCancelReplaceButton.addEventListener("click", resetKnowledgeForm);
 el.knowledgeForm.addEventListener("submit", uploadKnowledgeDocument);
 el.drawerPanel.addEventListener("click", handleKnowledgePanelClick);

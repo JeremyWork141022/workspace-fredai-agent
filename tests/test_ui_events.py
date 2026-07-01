@@ -65,6 +65,17 @@ class RuntimeHookRoutingTests(unittest.TestCase):
 
         self.assertEqual(events, [])
 
+    def test_dashboard_tool_opens_dashboard_drawer(self) -> None:
+        events = self.run_hooks(
+            query_text="make a CRT Cost dashboard by settle year",
+            tool_names=["crt_cost_dataset_catalog", "crt_cost_dashboard_spec"],
+        )
+
+        self.assertEqual(events[0]["type"], "open_drawer")
+        self.assertEqual(events[0]["view"], "dashboard")
+        self.assertEqual(events[0]["section"], "specs")
+        self.assertEqual(events[0]["source"], "runtime_hook:dashboard_drawer_on_tool_use")
+
 
 if __name__ == "__main__":
     unittest.main()

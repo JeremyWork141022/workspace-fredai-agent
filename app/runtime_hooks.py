@@ -65,6 +65,11 @@ KNOWLEDGE_DRAWER_SECTIONS = {
 
 KNOWLEDGE_SECTION_PRIORITY = ("pending_corrections", "wiki_pages", "documents")
 
+DASHBOARD_DRAWER_TOOLS = {
+    "crt_cost_dataset_catalog",
+    "crt_cost_dashboard_spec",
+}
+
 
 def build_default_hook_registry() -> RuntimeHookRegistry:
     registry = RuntimeHookRegistry()
@@ -73,6 +78,13 @@ def build_default_hook_registry() -> RuntimeHookRegistry:
             name="knowledge_drawer_on_tool_use",
             event="turn_completed",
             handler=knowledge_drawer_on_tool_use,
+        )
+    )
+    registry.register(
+        RuntimeHook(
+            name="dashboard_drawer_on_tool_use",
+            event="turn_completed",
+            handler=dashboard_drawer_on_tool_use,
         )
     )
     return registry
@@ -95,6 +107,28 @@ def knowledge_drawer_on_tool_use(context: RuntimeHookContext) -> List[UiEvent]:
             "section": section,
             "reason": f"Knowledge hook opened because these tools ran: {', '.join(matched_tools)}.",
             "source": "runtime_hook:knowledge_drawer_on_tool_use",
+            "matched_tools": matched_tools,
+            "tool_names": list(context.tool_names),
+            "attachment_count": len(context.attachments),
+        }
+    ]
+
+
+def dashboard_drawer_on_tool_use(context: RuntimeHookContext) -> List[UiEvent]:
+    if context.status not in {"success", "model_error", "auth_error", "error"}:
+        return []
+
+    matched_tools = [name for name in context.tool_names if name in DASHBOARD_DRAWER_TOOLS]
+    if not matched_tools:
+        return []
+
+    return [
+        {
+            "type": "open_drawer",
+            "view": "dashboard",
+            "section": "specs",
+            "reason": f"Dashboard hook opened because these tools ran: {', '.join(matched_tools)}.",
+            "source": "runtime_hook:dashboard_drawer_on_tool_use",
             "matched_tools": matched_tools,
             "tool_names": list(context.tool_names),
             "attachment_count": len(context.attachments),
