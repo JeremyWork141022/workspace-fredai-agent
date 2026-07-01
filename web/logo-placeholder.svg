@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 100" role="img" aria-labelledby="title desc">
-  <title id="title">CRT Analytics placeholder logo</title>
+  <title id="title">CRT Cost Agent placeholder logo</title>
   <desc id="desc">A wide placeholder logo sized for a 3.5 to 1 rectangle.</desc>
   <rect width="350" height="100" rx="12" fill="#ffffff"/>
   <rect x="1" y="1" width="348" height="98" rx="11" fill="none" stroke="#d9d9e3" stroke-width="2"/>
   <rect x="22" y="24" width="54" height="52" rx="10" fill="#0f766e"/>
   <path d="M56.6 39.4c-2.2-2-5-3-8.3-3-7.2 0-12.2 5.4-12.2 13.6s5 13.6 12.2 13.6c3.4 0 6.2-1 8.4-3.1l4.5 5.1c-3.2 3-7.5 4.6-12.9 4.6-11.3 0-19.3-8.3-19.3-20.2s8-20.2 19.3-20.2c5.2 0 9.5 1.6 12.7 4.6l-4.4 5z" fill="#ffffff"/>
-  <text x="94" y="48" fill="#202123" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700">CRT Analytics</text>
+  <text x="94" y="48" fill="#202123" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700">CRT Cost Agent</text>
   <text x="95" y="72" fill="#6b7280" font-family="Segoe UI, Arial, sans-serif" font-size="15">replace with your work logo PNG</text>
 </svg>

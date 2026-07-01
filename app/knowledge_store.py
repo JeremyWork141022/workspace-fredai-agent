@@ -22,7 +22,7 @@ from app.knowledge_chunker import (
 from app.session_store import json_dumps, json_loads, utc_now
 
 
-DEFAULT_KNOWLEDGE_BASE = "CRT Analytics"
+DEFAULT_KNOWLEDGE_BASE = "CRT Cost"
 MAX_TOOL_CONTENT_CHARS = 60000
 LINK_RE = re.compile(r"\[\[([a-zA-Z0-9_.:-]+)(?:\|([^\]]+))?\]\]")
 

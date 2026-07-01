@@ -70,9 +70,9 @@ orchestrator = WorkspaceAgentOrchestrator(config)
 scheduler = CronScheduler()
 
 app = FastAPI(
-    title="CRT Analytics Agent",
+    title="CRT Cost Agent",
     version="0.1.0",
-    description="Internal API runtime for the CRT Analytics FredAI agent.",
+    description="Internal API runtime for the CRT Cost FredAI agent.",
 )
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"

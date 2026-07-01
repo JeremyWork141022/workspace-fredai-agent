@@ -3,6 +3,81 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-06-30 - CRT Cost Agent Branch Preparation
+
+### Request
+
+Prepare a new CRT Cost branch as the first real single-process showcase agent.
+The prototype should focus on a deal-level CRT Cost database, where each row is
+a deal and fields include CRT Cost, UPB, payoff date, settle year, deal type,
+and other features needed for aggregation, derived columns, dashboarding, and
+partial-year normalization formulas.
+
+The user also asked why the UI used KaTeX instead of MathJax and clarified that
+using a large, popular formula-rendering package is acceptable for this
+specific formula-rendering task.
+
+### Branch
+
+Created:
+
+```text
+codex/crt-cost-agent
+```
+
+### Implemented Changes
+
+- Switched branch-specific UI text from `CRT Analytics Agent` to
+  `CRT Cost Agent`.
+- Switched the browser title, empty-thread prompt, composer placeholder, share
+  message text, and disclaimer to CRT Cost wording.
+- Switched the backend FastAPI title/description to `CRT Cost Agent`.
+- Switched the default knowledge-base namespace from `CRT Analytics` to
+  `CRT Cost`.
+- Replaced the active curated memory with a CRT Cost-specific
+  `.runtime/memories/MEMORY.md`.
+- Updated the default memory seed used on a fresh runtime when `MEMORY.md` does
+  not already exist.
+- Added `docs/CRT_COST_AGENT_DEVELOPMENT_PLAN.md`.
+- Added `web/vendor/mathjax/README.md` documenting the local MathJax asset
+  layout.
+- Changed formula rendering to prefer local MathJax:
+
+```text
+web/vendor/mathjax/tex-mml-chtml.js
+```
+
+The UI loads that file from:
+
+```text
+/static/vendor/mathjax/tex-mml-chtml.js
+```
+
+If the MathJax bundle is not present, formulas stay visible as TeX-style text.
+There is no CDN dependency and no npm install requirement.
+
+### Why MathJax Here
+
+KaTeX is fast and smaller, but MathJax supports a broader TeX/MathML surface and
+is a better default for business documentation that may contain diverse Word,
+PDF, and methodology formulas. Since this project can vendor approved static
+browser assets, MathJax is acceptable for the rendering layer. Formula
+extraction and formula correctness are still backend/document-intake concerns;
+MathJax only renders formula strings that the agent already has.
+
+### Development Starting Point
+
+Start with data and formula definitions before dashboard visuals:
+
+1. Create a small non-sensitive sample CRT Cost CSV/XLSX.
+2. Draft a data dictionary with column meanings and examples.
+3. Draft a formula catalog for CRT Cost, UPB weighting, aggregation, and
+   partial-year normalization.
+4. Upload the dictionary/catalog to the `CRT Cost` knowledge base.
+5. Add deterministic backend tools for profiling, aggregation, and approved
+   formula execution.
+6. Add the dashboard drawer only after tool output is stable.
+
 ## 2026-06-30 - Runtime Hook Infrastructure For Drawer Events And Self-Inspection
 
 ### User Questions

@@ -9,7 +9,7 @@ from app.orchestrator import WorkspaceAgentOrchestrator
 
 
 async def _main() -> None:
-    parser = argparse.ArgumentParser(description="Run one CRT Analytics Agent turn.")
+    parser = argparse.ArgumentParser(description="Run one CRT Cost Agent turn.")
     parser.add_argument("message", nargs="+", help="User message")
     parser.add_argument("--workspace-id", default="local")
     parser.add_argument("--user-id", default="cli")

@@ -8,9 +8,9 @@ const INITIAL_SHARE_TO = QUERY.get("to") || "";
 const SHARED_WORKSPACE_ID = "shared_workspace";
 const SHARED_USER_ID = "shared";
 const MOCK_THREADS_KEY = "workspace-fredai-mock-threads-v1";
-const NEW_THREAD_TITLE = "Ask me anything about CRT Analytics";
-const EMPTY_STATE_TITLE = "What should CRT Analytic Agent help with?";
-const EMPTY_STATE_HINT = "Ask me about CRT Analytics.";
+const NEW_THREAD_TITLE = "Ask me anything about CRT Cost";
+const EMPTY_STATE_TITLE = "What should CRT Cost Agent help with?";
+const EMPTY_STATE_HINT = "Ask me about CRT Cost.";
 
 const DRAWER_VIEWS = {
   knowledge: {
@@ -914,7 +914,7 @@ async function uploadKnowledgeDocument(event) {
     }
     const payload = {
       workspace_id: el.workspaceId.value.trim() || SHARED_WORKSPACE_ID,
-      knowledge_base: "CRT Analytics",
+      knowledge_base: "CRT Cost",
       title: "",
       process: "",
       doc_type: "",
@@ -1277,35 +1277,57 @@ function shouldRenderMathToken(token) {
   return /[\\^_=+\-*/<>]|[A-Za-z]\s*\(/.test(formula);
 }
 
-const KATEX_JS_PATH = "/static/vendor/katex/katex.min.js";
-const KATEX_CSS_PATH = "/static/vendor/katex/katex.min.css";
-let katexLoadPromise = null;
+const MATHJAX_JS_PATH = "/static/vendor/mathjax/tex-mml-chtml.js";
+let mathJaxLoadPromise = null;
 
-async function loadKatexAssets() {
-  if (window.katex) return true;
-  if (katexLoadPromise) return katexLoadPromise;
+function configureMathJax() {
+  if (window.MathJax?.typesetPromise) return;
+  window.MathJax = {
+    ...(window.MathJax || {}),
+    tex: {
+      ...(window.MathJax?.tex || {}),
+      inlineMath: [["\\(", "\\)"], ["$", "$"]],
+      displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+      processEscapes: true,
+    },
+    options: {
+      ...(window.MathJax?.options || {}),
+      enableMenu: false,
+    },
+    startup: {
+      ...(window.MathJax?.startup || {}),
+      typeset: false,
+    },
+  };
+}
 
-  katexLoadPromise = fetch(KATEX_JS_PATH, { method: "HEAD" })
+async function loadMathJaxAssets() {
+  if (window.MathJax?.typesetPromise) return true;
+  if (mathJaxLoadPromise) return mathJaxLoadPromise;
+
+  configureMathJax();
+  mathJaxLoadPromise = fetch(MATHJAX_JS_PATH, { method: "HEAD" })
     .then((response) => {
       if (!response.ok) return false;
-      if (!document.querySelector(`link[href="${KATEX_CSS_PATH}"]`)) {
-        const style = document.createElement("link");
-        style.rel = "stylesheet";
-        style.href = KATEX_CSS_PATH;
-        document.head.appendChild(style);
-      }
       return new Promise((resolve) => {
         const script = document.createElement("script");
-        script.src = KATEX_JS_PATH;
+        script.src = MATHJAX_JS_PATH;
         script.defer = true;
-        script.onload = () => resolve(Boolean(window.katex));
+        script.onload = () => resolve(Boolean(window.MathJax?.typesetPromise));
         script.onerror = () => resolve(false);
         document.head.appendChild(script);
       });
     })
     .catch(() => false);
 
-  return katexLoadPromise;
+  return mathJaxLoadPromise;
+}
+
+function typesetMathNode(node) {
+  if (!window.MathJax?.typesetPromise) return;
+  window.MathJax.typesetPromise([node]).catch((error) => {
+    console.warn("MathJax render failed; leaving text formula visible.", error);
+  });
 }
 
 function readMathArgument(source, startIndex) {
@@ -1331,21 +1353,13 @@ function renderMathFormula(value, display = false) {
   const node = document.createElement(display ? "div" : "span");
   node.className = display ? "math-block" : "math-inline";
   node.setAttribute("aria-label", `Formula: ${formula}`);
-  if (window.katex?.render) {
-    try {
-      window.katex.render(formula, node, {
-        displayMode: display,
-        throwOnError: false,
-        strict: "ignore",
-        trust: false,
-      });
-      return node;
-    } catch (error) {
-      console.warn("KaTeX render failed; falling back to text formula.", error);
-    }
+  if (window.MathJax?.typesetPromise) {
+    node.textContent = display ? `\\[${formula}\\]` : `\\(${formula}\\)`;
+    typesetMathNode(node);
+    return node;
   }
   node.classList.add("math-fallback");
-  node.textContent = display ? formula : `$${formula}$`;
+  node.textContent = display ? `\\[${formula}\\]` : `\\(${formula}\\)`;
   return node;
 }
 
@@ -2626,7 +2640,7 @@ async function copyShareLink() {
   scrollToSharedRange();
   const copied = await copyTextToClipboard(
     [
-      "Please look at this CRT Analytics thread excerpt:",
+      "Please look at this CRT Cost thread excerpt:",
       url,
       "",
       `Thread: ${title}`,
@@ -2814,7 +2828,7 @@ async function initializeApp() {
   el.userId.value = SHARED_USER_ID;
   autoResizeInput();
   render({ forceScroll: true });
-  loadKatexAssets().then((loaded) => {
+  loadMathJaxAssets().then((loaded) => {
     if (loaded) render({ preserveScroll: true });
   });
   await refreshHealth();
