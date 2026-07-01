@@ -3,6 +3,54 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-07-01 - Switch Formula Rendering Back To KaTeX
+
+### Request
+
+Use KaTeX instead of MathJax and make formula rendering work with the minimum
+setup burden on the work computer.
+
+### Change
+
+- Removed the active MathJax loader path from `web/app.js`.
+- Restored KaTeX as the only active professional formula renderer.
+- The UI now loads:
+
+```text
+/static/vendor/katex/katex.min.css
+/static/vendor/katex/katex.min.js
+```
+
+- `renderMathFormula()` now calls:
+
+```text
+window.katex.render(...)
+```
+
+- If KaTeX is not installed locally, formulas remain visible as TeX-style text.
+- Removed the MathJax vendor README.
+- Added `web/vendor/katex/README.md`.
+- Updated the CRT Cost development plan to reference KaTeX instead of MathJax.
+
+### Minimum Work-Computer Setup
+
+The minimum setup is to copy the KaTeX browser distribution into:
+
+```text
+web/vendor/katex/
+```
+
+Required files/folders:
+
+```text
+web/vendor/katex/katex.min.js
+web/vendor/katex/katex.min.css
+web/vendor/katex/fonts/
+```
+
+`fonts/` should be copied because `katex.min.css` references KaTeX web fonts.
+No Python package is needed and `requirements.txt` should not change.
+
 ## 2026-06-30 - CRT Cost Agent Branch Preparation
 
 ### Request

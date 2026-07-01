@@ -18,8 +18,8 @@ codex/crt-cost-agent
 - FredAI remains the only model gateway.
 - Existing thread, knowledge-base, wiki, feedback, hooks, upload, and drawer
   infrastructure remain in place.
-- Formula rendering now prefers local MathJax if the approved browser bundle is
-  copied to `web/vendor/mathjax/tex-mml-chtml.js`.
+- Formula rendering now prefers local KaTeX if the approved browser distribution
+  files are copied to `web/vendor/katex/`.
 
 ## What The Agent Is Being Built To Understand
 
@@ -208,7 +208,7 @@ Recommended next work session:
 
 1. Confirm branch: `git branch --show-current`.
 2. Confirm UI starts in mock mode.
-3. Confirm MathJax local asset policy with the work computer.
+3. Confirm KaTeX local asset policy with the work computer.
 4. Prepare the sample CRT Cost data dictionary.
 5. Upload/index the data dictionary.
 6. Add the first deterministic backend tool: `crt_cost_profile_dataset`.

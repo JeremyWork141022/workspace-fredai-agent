@@ -1277,57 +1277,35 @@ function shouldRenderMathToken(token) {
   return /[\\^_=+\-*/<>]|[A-Za-z]\s*\(/.test(formula);
 }
 
-const MATHJAX_JS_PATH = "/static/vendor/mathjax/tex-mml-chtml.js";
-let mathJaxLoadPromise = null;
+const KATEX_JS_PATH = "/static/vendor/katex/katex.min.js";
+const KATEX_CSS_PATH = "/static/vendor/katex/katex.min.css";
+let katexLoadPromise = null;
 
-function configureMathJax() {
-  if (window.MathJax?.typesetPromise) return;
-  window.MathJax = {
-    ...(window.MathJax || {}),
-    tex: {
-      ...(window.MathJax?.tex || {}),
-      inlineMath: [["\\(", "\\)"], ["$", "$"]],
-      displayMath: [["\\[", "\\]"], ["$$", "$$"]],
-      processEscapes: true,
-    },
-    options: {
-      ...(window.MathJax?.options || {}),
-      enableMenu: false,
-    },
-    startup: {
-      ...(window.MathJax?.startup || {}),
-      typeset: false,
-    },
-  };
-}
+async function loadKatexAssets() {
+  if (window.katex?.render) return true;
+  if (katexLoadPromise) return katexLoadPromise;
 
-async function loadMathJaxAssets() {
-  if (window.MathJax?.typesetPromise) return true;
-  if (mathJaxLoadPromise) return mathJaxLoadPromise;
-
-  configureMathJax();
-  mathJaxLoadPromise = fetch(MATHJAX_JS_PATH, { method: "HEAD" })
+  katexLoadPromise = fetch(KATEX_JS_PATH, { method: "HEAD" })
     .then((response) => {
       if (!response.ok) return false;
+      if (!document.querySelector(`link[href="${KATEX_CSS_PATH}"]`)) {
+        const style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = KATEX_CSS_PATH;
+        document.head.appendChild(style);
+      }
       return new Promise((resolve) => {
         const script = document.createElement("script");
-        script.src = MATHJAX_JS_PATH;
+        script.src = KATEX_JS_PATH;
         script.defer = true;
-        script.onload = () => resolve(Boolean(window.MathJax?.typesetPromise));
+        script.onload = () => resolve(Boolean(window.katex?.render));
         script.onerror = () => resolve(false);
         document.head.appendChild(script);
       });
     })
     .catch(() => false);
 
-  return mathJaxLoadPromise;
-}
-
-function typesetMathNode(node) {
-  if (!window.MathJax?.typesetPromise) return;
-  window.MathJax.typesetPromise([node]).catch((error) => {
-    console.warn("MathJax render failed; leaving text formula visible.", error);
-  });
+  return katexLoadPromise;
 }
 
 function readMathArgument(source, startIndex) {
@@ -1353,10 +1331,18 @@ function renderMathFormula(value, display = false) {
   const node = document.createElement(display ? "div" : "span");
   node.className = display ? "math-block" : "math-inline";
   node.setAttribute("aria-label", `Formula: ${formula}`);
-  if (window.MathJax?.typesetPromise) {
-    node.textContent = display ? `\\[${formula}\\]` : `\\(${formula}\\)`;
-    typesetMathNode(node);
-    return node;
+  if (window.katex?.render) {
+    try {
+      window.katex.render(formula, node, {
+        displayMode: display,
+        throwOnError: false,
+        strict: "ignore",
+        trust: false,
+      });
+      return node;
+    } catch (error) {
+      console.warn("KaTeX render failed; leaving text formula visible.", error);
+    }
   }
   node.classList.add("math-fallback");
   node.textContent = display ? `\\[${formula}\\]` : `\\(${formula}\\)`;
@@ -2828,7 +2814,7 @@ async function initializeApp() {
   el.userId.value = SHARED_USER_ID;
   autoResizeInput();
   render({ forceScroll: true });
-  loadMathJaxAssets().then((loaded) => {
+  loadKatexAssets().then((loaded) => {
     if (loaded) render({ preserveScroll: true });
   });
   await refreshHealth();
