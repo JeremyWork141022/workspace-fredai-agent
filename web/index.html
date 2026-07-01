@@ -52,6 +52,9 @@
       </aside>
 
       <section class="chat" aria-label="Agent chat">
+        <button id="chatExpandButton" class="chat-expand-button" type="button" aria-label="Focus chat" title="Focus chat">
+          <span aria-hidden="true"></span>
+        </button>
         <div id="messages" class="messages" aria-live="polite"></div>
         <button id="scrollToBottomButton" class="scroll-button hidden" type="button" aria-label="Scroll to latest message">
           <span aria-hidden="true">↓</span>
@@ -124,8 +127,12 @@
             <p id="drawerDescription">Source documents stay raw. Corrections and clarifications belong in the wiki layer.</p>
           </div>
           <div class="drawer-header-actions">
-            <button id="drawerFocusChatButton" type="button">Focus Chat</button>
-            <button id="drawerMaximizeButton" type="button">Maximize</button>
+            <button id="drawerFocusChatButton" class="drawer-icon-button chat-focus-control" type="button" aria-label="Focus chat" title="Focus chat">
+              <span aria-hidden="true"></span>
+            </button>
+            <button id="drawerMaximizeButton" class="drawer-icon-button expand-control" type="button" aria-label="Expand dashboard" title="Expand dashboard">
+              <span aria-hidden="true"></span>
+            </button>
             <button id="drawerCloseButton" type="button">Close</button>
           </div>
         </header>
@@ -211,6 +218,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260630-ui-events"></script>
+    <script src="/static/app.js?v=20260701-layout-modes"></script>
   </body>
 </html>

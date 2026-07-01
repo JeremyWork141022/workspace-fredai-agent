@@ -3,6 +3,45 @@
 This log records implementation decisions, known concerns, and follow-up work for
 the CRT Analytics Agent / FredAI workspace agent.
 
+## 2026-07-01 - Dashboard/Chat Split Layout Modes
+
+### Request
+
+Refine the dashboard and chat UI so the app starts in a dashboard-plus-chat
+workspace instead of a pure chat screen. The sidebar should stay visible, the
+dashboard and chat should behave like two parallel work surfaces, and expand
+controls should be icons rather than word buttons.
+
+### Implemented Changes
+
+- Narrowed the left sidebar from the old 300px layout to a 200px layout.
+- Made the app open in dashboard split mode by default.
+- Kept the left sidebar visible in dashboard-focused and chat-focused desktop
+  modes.
+- Added a chat expand icon button.
+- Converted the dashboard maximize control from text to an icon button.
+- Added three clear UI modes:
+  - `side`: dashboard and chat are side by side.
+  - `full`: dashboard is the main surface and chat becomes a compact
+    bottom-right panel.
+  - `chat`: chat is the main surface and the drawer is hidden.
+- In dashboard-focused compact-chat mode, the compact chat expand icon returns
+  the app to the side-by-side default mode.
+- In side-by-side mode, the chat expand icon switches to chat-focused mode.
+- In compact-chat mode, hid the disclaimer line to reduce visual clutter.
+- Replaced the broken literal `\2193` scroll indicator with a smaller
+  CSS-drawn downward arrow.
+- Adjusted compact-chat completion scrolling so completed responses scroll to
+  the start of the assistant response rather than to the very bottom.
+
+### Current Interaction Model
+
+- Default page: sidebar + chat + dashboard drawer.
+- Dashboard expand icon: dashboard-focused surface with compact chat.
+- Compact chat expand icon: returns to default side-by-side mode.
+- Chat expand icon in default mode: chat-focused surface.
+- Sidebar remains available as the persistent navigation surface.
+
 ## 2026-07-01 - CRT Cost Dashboard And Database Scaffold
 
 ### Request

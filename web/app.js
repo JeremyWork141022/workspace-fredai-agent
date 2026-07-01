@@ -85,8 +85,8 @@ const state = {
   suppressScrollHandlerUntil: 0,
   lastMessagesScrollTop: 0,
   drawer: {
-    open: false,
-    view: "knowledge",
+    open: true,
+    view: "dashboard",
     mode: "side",
   },
   knowledge: {
@@ -129,6 +129,7 @@ const el = {
   clearShareButton: document.querySelector("#clearShareButton"),
   messages: document.querySelector("#messages"),
   scrollToBottomButton: document.querySelector("#scrollToBottomButton"),
+  chatExpandButton: document.querySelector("#chatExpandButton"),
   chatForm: document.querySelector("#chatForm"),
   composerShell: document.querySelector("#composerShell"),
   messageInput: document.querySelector("#messageInput"),
@@ -374,9 +375,44 @@ function scrollToBottom(behavior = "auto") {
   updateScrollButton();
 }
 
+function isCompactChatMode() {
+  return state.drawer.open && state.drawer.mode === "full";
+}
+
+function latestMessageForScroll() {
+  for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+    const message = state.messages[index];
+    if (message?.role === "assistant") return message;
+  }
+  return state.messages[state.messages.length - 1] || null;
+}
+
+function scrollMessageToStart(message, behavior = "auto") {
+  const id = typeof message === "string" ? message : message?.id;
+  if (!id) {
+    scrollToBottom(behavior);
+    return;
+  }
+  const target = el.messages.querySelector(`[data-message-id="${CSS.escape(String(id))}"]`);
+  if (!target) {
+    scrollToBottom(behavior);
+    return;
+  }
+  state.suppressScrollHandlerUntil = Date.now() + 700;
+  target.scrollIntoView({ behavior, block: "start" });
+  requestAnimationFrame(() => {
+    state.lastMessagesScrollTop = el.messages.scrollTop;
+    updateScrollButton();
+  });
+}
+
 function followLatestAfterRender(behavior = "auto") {
   requestAnimationFrame(() => {
     if (!state.autoFollowLatest) return;
+    if (isCompactChatMode() && !state.busy) {
+      scrollMessageToStart(latestMessageForScroll(), behavior);
+      return;
+    }
     scrollToBottom(behavior);
     requestAnimationFrame(() => {
       if (state.autoFollowLatest) scrollToBottom("auto");
@@ -584,13 +620,20 @@ function renderDrawer() {
   const view = DRAWER_VIEWS[state.drawer.view] || DRAWER_VIEWS.empty;
   el.shell.classList.toggle("drawer-open", state.drawer.open);
   el.shell.classList.toggle("drawer-full", state.drawer.open && state.drawer.mode === "full");
+  el.shell.classList.toggle("chat-focus", !state.drawer.open && state.drawer.mode === "chat");
   el.drawerPanel.classList.toggle("hidden", !state.drawer.open);
   el.drawerPanel.classList.toggle("drawer-panel-full", state.drawer.open && state.drawer.mode === "full");
   el.drawerBody.dataset.drawerView = state.drawer.view;
   el.drawerKind.textContent = view.kind;
   el.drawerTitle.textContent = view.title;
   el.drawerDescription.textContent = view.description;
-  el.drawerMaximizeButton.textContent = state.drawer.mode === "full" ? "Side View" : "Maximize";
+  const dashboardExpanded = state.drawer.mode === "full";
+  el.drawerMaximizeButton.title = dashboardExpanded ? "Return to split view" : "Expand dashboard";
+  el.drawerMaximizeButton.setAttribute("aria-label", el.drawerMaximizeButton.title);
+  el.drawerMaximizeButton.classList.toggle("is-expanded", dashboardExpanded);
+  el.chatExpandButton.title = dashboardExpanded ? "Return to split view" : "Focus chat";
+  el.chatExpandButton.setAttribute("aria-label", el.chatExpandButton.title);
+  el.chatExpandButton.classList.toggle("is-compact-return", dashboardExpanded);
   el.knowledgeView.classList.toggle("hidden", state.drawer.view !== "knowledge");
   el.dashboardView.classList.toggle("hidden", state.drawer.view !== "dashboard");
   el.drawerEmpty.classList.toggle("hidden", state.drawer.view === "knowledge" || state.drawer.view === "dashboard");
@@ -668,9 +711,7 @@ function renderDashboardSpecCard(dashboard) {
     dashboard.status || "draft",
     widget.type || dashboard.kind || "dashboard",
     dashboard.pinned ? "pinned" : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean).join(" | ");
   title.append(strong, meta);
   const badge = document.createElement("small");
   badge.textContent = spec.data_status || "spec";
@@ -913,7 +954,7 @@ function knowledgeEmpty(text) {
 }
 
 async function openKnowledgePanel(options = {}) {
-  openDrawer("knowledge");
+  openDrawer("knowledge", options.mode || "side");
   if (options.reason) setKnowledgeStatus(options.reason);
   renderKnowledgePanel();
   if ((options.refresh || !state.knowledge.documents.length) && !state.knowledge.loading) {
@@ -923,7 +964,7 @@ async function openKnowledgePanel(options = {}) {
 }
 
 async function openDashboardPanel(options = {}) {
-  openDrawer("dashboard");
+  openDrawer("dashboard", options.mode || "side");
   if (options.reason) setDashboardStatus(options.reason);
   renderDashboardPanel();
   if ((options.refresh || !state.dashboard.specs.length) && !state.dashboard.loading) {
@@ -941,7 +982,7 @@ function openDrawer(view = "knowledge", mode = "") {
 
 function closeDrawer() {
   state.drawer.open = false;
-  state.drawer.mode = "side";
+  state.drawer.mode = "chat";
   state.knowledge.replaceDocumentId = "";
   renderDrawer();
 }
@@ -953,7 +994,20 @@ function toggleDrawerMaximize() {
 }
 
 function focusChatFromDrawer() {
-  state.drawer.mode = "side";
+  state.drawer.mode = "chat";
+  state.drawer.open = false;
+  renderDrawer();
+  el.messageInput.focus();
+}
+
+function toggleChatFocus() {
+  if (isCompactChatMode()) {
+    state.drawer.mode = "side";
+    state.drawer.open = true;
+    renderDrawer();
+    return;
+  }
+  state.drawer.mode = "chat";
   state.drawer.open = false;
   renderDrawer();
   el.messageInput.focus();
@@ -2451,6 +2505,9 @@ async function runAssistantRequest(userMessage, options = {}) {
     if (state.sessionId) replaceThreadUrl(state.sessionId);
     applyUiEvents(pendingUiEvents);
     render(state.autoFollowLatest ? { forceScroll: true } : { preserveScroll: true });
+    if (state.autoFollowLatest && isCompactChatMode()) {
+      scrollMessageToStart(assistantMessage, "smooth");
+    }
     el.messageInput.focus();
   }
 }
@@ -3068,6 +3125,7 @@ el.dashboardButton.addEventListener("click", openDashboardPanel);
 el.drawerCloseButton.addEventListener("click", closeDrawer);
 el.drawerFocusChatButton.addEventListener("click", focusChatFromDrawer);
 el.drawerMaximizeButton.addEventListener("click", toggleDrawerMaximize);
+el.chatExpandButton.addEventListener("click", toggleChatFocus);
 el.knowledgeRefreshButton.addEventListener("click", refreshKnowledgeBase);
 el.dashboardRefreshButton.addEventListener("click", refreshDashboards);
 el.knowledgeCancelReplaceButton.addEventListener("click", resetKnowledgeForm);
@@ -3079,7 +3137,11 @@ el.threadList.addEventListener("keydown", handleThreadListKeydown);
 el.threadList.addEventListener("focusout", handleThreadListFocusout);
 el.scrollToBottomButton.addEventListener("click", () => {
   state.autoFollowLatest = true;
-  scrollToBottom("smooth");
+  if (isCompactChatMode()) {
+    scrollMessageToStart(latestMessageForScroll(), "smooth");
+  } else {
+    scrollToBottom("smooth");
+  }
 });
 el.messages.addEventListener("scroll", handleMessagesScroll);
 el.messages.addEventListener("click", handleMessageClick);
@@ -3130,6 +3192,9 @@ async function initializeApp() {
   });
   await refreshHealth();
   await refreshThreads();
+  if (state.drawer.open && state.drawer.view === "dashboard") {
+    await refreshDashboards();
+  }
 
   if (INITIAL_SESSION_ID) {
     const range =
